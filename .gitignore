@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE and operating-system files
+.vs/
+.idea/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+
+# Local logs and temporary files
+*.log
+*.tmp
+
+# Game, BepInEx, and local reference assemblies
+BepInEx/
+*_Data/Managed/
+lib/
+libs/
+references/
+
+# Do not commit DLL dependencies. Keep only the public trainer build.
+*.dll
+!dist/FoATrainer_V17_1.dll
