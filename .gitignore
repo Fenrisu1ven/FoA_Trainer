@@ -4,6 +4,7 @@ __pycache__/
 
 # IDE and operating-system files
 .vs/
+.vscode/
 .idea/
 *.suo
 *.user
@@ -16,6 +17,7 @@ Thumbs.db
 
 # Game, BepInEx, and local reference assemblies
 BepInEx/
+Managed/
 *_Data/Managed/
 lib/
 libs/
@@ -23,4 +25,4 @@ references/
 
 # Do not commit DLL dependencies. Keep only the public trainer build.
 *.dll
-!dist/FoATrainer_V17_1.dll
+!dist/FoATrainer_V18_4.dll

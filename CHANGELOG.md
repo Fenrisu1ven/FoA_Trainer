@@ -2,6 +2,46 @@
 
 All notable public changes to FoA Trainer are documented in this file.
 
+## [2.6.4] - V18.4
+
+- Returned to a stability branch based directly on the confirmed-working V18.3 runtime.
+- Added lightweight adjustable ESP icon badges and icons-only mode.
+- Split HP text and HP bars into independent options.
+- Added compact 3 px HP bars with adjustable width.
+- Added `LOOT / EMPTY` state for searchable containers and corpses.
+- Added an option to hide empty containers and corpses.
+- Corrected corpse versus living NPC/enemy handling so dead actors are not rendered through the living-NPC branch.
+- Retained performance-safe targeted `World.All<T>()` scanning for `PickItemAction`, `SearchAction`, and `NpcElement`.
+- Retained `ModelsSet<T>.GetManagedEnumerator()` support, reflection caching, Repaint-only drawing, and distance rejection before expensive loot-state checks.
+- Confirmed runtime startup with all 13 Harmony patches installed and 0 missing.
+
+## [2.6.3] - V18.3
+
+- Fixed the Mono.CSharp generic compile regression introduced in V18.2.
+- Replaced problematic generic-set usage with the proven dictionary-based approach.
+- Restored the working ESP/runtime baseline used by the V18.4 stability build.
+
+## [2.6.2] - V18.2
+
+- Fixed enumeration of the game's `ModelsSet<T>` collections through `GetManagedEnumerator()`.
+- Added additional raw/cache ESP diagnostic counters.
+- Superseded this development build after a duplicate generic-type compiler issue was found.
+
+## [2.6.1] - V18.1
+
+- Removed the full-world `Location` scan.
+- Switched container/corpse discovery to targeted `SearchAction` scanning.
+- Cached positions, HP values, and reflection accessors.
+- Limited ESP overlay rendering to Unity `Repaint` events.
+- Added gameplay-camera fallback.
+
+## [2.6.0] - V18
+
+- Added the first configurable ESP release line.
+- Added the dedicated ESP tab and `F6` master toggle.
+- Added item, container, enemy, and NPC groups.
+- Added per-group distances, item-category filters, optional names/distance/HP, dead-actor display, and profile-persisted ESP settings.
+
 ## [2.5.1] - V17.1
 
 - Fixed the clipped `TAINTED GRAIL - TRAINER` title.
@@ -75,6 +115,7 @@ All notable public changes to FoA Trainer are documented in this file.
 - Added Flight / NoClip.
 - Added the Item Spawner and item-stat preview.
 
+[2.6.4]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.6.4
 [2.5.1]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.5.1
 [2.5.0]: https://github.com/Fenrisu1ven/FoA_Trainer/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/Fenrisu1ven/FoA_Trainer/compare/v2.3.0...v2.4.0

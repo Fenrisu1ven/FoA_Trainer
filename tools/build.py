@@ -2,7 +2,7 @@ import struct, uuid, pathlib
 from collections import OrderedDict
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / 'dist' / 'FoATrainer_V17_1.dll'
+OUT = ROOT / 'dist' / 'FoATrainer_V18_4.dll'
 SRC = (ROOT / 'src' / 'FoATrainerRuntime.cs').read_text(encoding='utf-8')
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
@@ -42,7 +42,7 @@ class USHeap:
         payload=b+bytes([special]); self.data.extend(c_uint(len(payload))); self.data.extend(payload); return off
 
 strings=StringHeap(); blobs=BlobHeap(); us=USHeap(); idx={}
-for s in ['FoATrainer_V17_1.dll','<Module>','Bootstrap','FoATrainer','.ctor','Awake',
+for s in ['FoATrainer_V18_4.dll','<Module>','Bootstrap','FoATrainer','.ctor','Awake',
           'Object','System','Assembly','System.Reflection','BaseUnityPlugin','BepInEx','BepInPlugin',
           'File','System.IO','Type','Activator','MethodInfo','StreamWriter','System.IO','Boolean',
           'Load','GetType','CreateInstance','GetMethod','Invoke','AppendAllText','set_AutoFlush','mscorlib']:
@@ -64,7 +64,7 @@ sig_getmethod=blobs.add(b'\x20\x01'+sig_class(TR_METHODINFO)+b'\x0e')
 sig_invoke=blobs.add(b'\x20\x02\x1c\x1c\x1d\x1c')
 sig_sw_ctor=blobs.add(b'\x20\x01\x01\x0e')
 sig_autoflush=blobs.add(b'\x20\x01\x01\x02')
-ca_blob=blobs.add(b'\x01\x00'+ser_string('rijiy.foa.trainer.v17_1')+ser_string('Tainted Grail Trainer by Rijiy V17.1')+ser_string('2.5.1')+b'\x00\x00')
+ca_blob=blobs.add(b'\x01\x00'+ser_string('rijiy.foa.trainer.v18.4')+ser_string('Tainted Grail Trainer by Rijiy V18.4')+ser_string('2.6.4')+b'\x00\x00')
 mscorlib_token=blobs.add(bytes.fromhex('b77a5c561934e089'))
 # locals: Assembly, Type, object, Type, StreamWriter, object, Type, object, Type, object, MethodInfo
 locals_sig=blobs.add(b'\x07\x0b'+sig_class(TR_ASSEMBLY)+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_TYPE)+sig_class(TR_STREAMWRITER)+b'\x1c'+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_METHODINFO))
@@ -113,44 +113,44 @@ def invoke_method(mi_local, target_il, args_ils):
 ctor_il=b'\x02'+tok(0x28,TOKEN_MEMBERREF(MR_BASE_CTOR))+b'\x2a'
 ctor_body=bytes([(len(ctor_il)<<2)|2])+ctor_il
 
-il=bytearray(); il+=log_il('[FoATrainer.V17.1] Awake entered')
+il=bytearray(); il+=log_il('[FoATrainer.V18.4] Awake entered')
 # mcs assembly
 il+=tok(0x72,TOKEN_US(us.add('mcs')))+tok(0x28,TOKEN_MEMBERREF(MR_ASM_LOAD))+stloc(0)
-il+=log_il('[FoATrainer.V17.1] mcs assembly loaded')
+il+=log_il('[FoATrainer.V18.4] mcs assembly loaded')
 # settings type + instance
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.CompilerSettings')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(1)
 il+=ldloc(1)+tok(0x28,TOKEN_MEMBERREF(MR_ACT_CREATE1))+stloc(2)
-il+=log_il('[FoATrainer.V17.1] CompilerSettings created')
+il+=log_il('[FoATrainer.V18.4] CompilerSettings created')
 # writer
 il+=tok(0x72,TOKEN_US(us.add('BepInEx\\FoATrainer_compile.log')))+tok(0x73,TOKEN_MEMBERREF(MR_SW_CTOR))+stloc(4)
 il+=ldloc(4)+b'\x17'+tok(0x6f,TOKEN_MEMBERREF(MR_SW_AUTOFLUSH))
 # report type + instance
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.StreamReportPrinter')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(3)
 il+=activator_create_with_args(3,[ldloc(4)])+stloc(5)
-il+=log_il('[FoATrainer.V17.1] StreamReportPrinter created')
+il+=log_il('[FoATrainer.V18.4] StreamReportPrinter created')
 # context
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.CompilerContext')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(6)
 il+=activator_create_with_args(6,[ldloc(2),ldloc(5)])+stloc(7)
-il+=log_il('[FoATrainer.V17.1] CompilerContext created')
+il+=log_il('[FoATrainer.V18.4] CompilerContext created')
 # evaluator
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.Evaluator')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(8)
 il+=activator_create_with_args(8,[ldloc(7)])+stloc(9)
-il+=log_il('[FoATrainer.V17.1] Evaluator created')
+il+=log_il('[FoATrainer.V18.4] Evaluator created')
 # get ReferenceAssembly MethodInfo
 il+=ldloc(8)+tok(0x72,TOKEN_US(us.add('ReferenceAssembly')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETMETHOD))+stloc(10)
 # references
 for off,name in zip(asm_us,asm_names):
-    il+=log_il('[FoATrainer.V17.1] Referencing '+name)
+    il+=log_il('[FoATrainer.V18.4] Referencing '+name)
     arg=tok(0x72,TOKEN_US(off))+tok(0x28,TOKEN_MEMBERREF(MR_ASM_LOAD))
     il+=invoke_method(10,ldloc(9),[arg])+b'\x26'
-    il+=log_il('[FoATrainer.V17.1] Reference OK '+name)
+    il+=log_il('[FoATrainer.V18.4] Reference OK '+name)
 # get Run MethodInfo
 il+=ldloc(8)+tok(0x72,TOKEN_US(us.add('Run')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETMETHOD))+stloc(10)
-il+=log_il('[FoATrainer.V17.1] Compiling runtime source')
+il+=log_il('[FoATrainer.V18.4] Compiling runtime source')
 il+=invoke_method(10,ldloc(9),[tok(0x72,TOKEN_US(src_us))])+b'\x26'
-il+=log_il('[FoATrainer.V17.1] Starting runtime')
+il+=log_il('[FoATrainer.V18.4] Starting runtime')
 il+=invoke_method(10,ldloc(9),[tok(0x72,TOKEN_US(start_us))])+b'\x26'
-il+=log_il('[FoATrainer.V17.1] Awake completed')+b'\x2a'
+il+=log_il('[FoATrainer.V18.4] Awake completed')+b'\x2a'
 awake_body=struct.pack('<HHII',0x3013,16,len(il),TOKEN_STANDALONESIG(1))+il  # fat, initlocals
 
 sect=bytearray(); ctor_off=0; sect+=ctor_body
@@ -174,7 +174,7 @@ table=bytearray(); table+=u32(0)+bytes([2,0,heap_sizes,1])+u64(valid)+u64(0)
 for t in range(64):
     if t in rows:table+=u32(rows[t])
 # Module
-table+=u16(0)+u16(idx['FoATrainer_V17_1.dll'])+u16(1)+u16(0)+u16(0)
+table+=u16(0)+u16(idx['FoATrainer_V18_4.dll'])+u16(1)+u16(0)+u16(0)
 # TypeRefs
 trs=[
  (1,'Object','System'),(1,'Assembly','System.Reflection'),(2,'BaseUnityPlugin','BepInEx'),(2,'BepInPlugin','BepInEx'),
@@ -241,5 +241,5 @@ struct.pack_into('<HH',opt,68,3,0x8540); struct.pack_into('<IIIIII',opt,72,0x100
 struct.pack_into('<II',opt,96+14*8,cli_rva,72); pe+=opt
 pe+=b'.text\0\0\0'+struct.pack('<IIIIIIHHI',virt_size,SECTION_RVA,raw_size,HEADERS,0,0,0,0,0x60000020)
 headers=bytes(dos)+bytes(pe); headers+=b'\0'*(HEADERS-len(headers))
-out=headers+bytes(sect_padded); OUT.write_bytes(out)
+out=headers+bytes(sect_padded); pathlib.Path(OUT).write_bytes(out)
 print(OUT,len(out),'IL',len(il),'meta',len(meta),'src chars',len(SRC))

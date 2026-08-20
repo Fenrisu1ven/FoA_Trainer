@@ -34,6 +34,38 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     public static bool TimePassSpeedEnabled;
     public static bool FlightEnabled;
 
+    // V18.4: stability branch based directly on working V18.3. Adds lightweight icon badges, compact optional HP bars, loot state, empty-loot filtering and corrected corpse handling.
+    public static bool EspEnabled;
+    public static bool EspItems = true;
+    public static bool EspContainers = true;
+    public static bool EspEnemies = true;
+    public static bool EspNpcs = false;
+    public static bool EspShowItemWeapons = true;
+    public static bool EspShowItemArmor = true;
+    public static bool EspShowItemConsumables = true;
+    public static bool EspShowItemMaterials = true;
+    public static bool EspShowItemImportant = true;
+    public static bool EspShowItemOther = false;
+    public static bool EspShowNames = true;
+    public static bool EspShowDistance = true;
+    public static bool EspShowHealth = true;
+    public static bool EspShowHealthBars = true;
+    public static bool EspShowDead = false;
+    public static bool EspShowLootState = true;
+    public static bool EspHideEmptyLoot = false;
+    public static bool EspShowBackground = true;
+    public static bool EspShowIcons = true;
+    public static bool EspIconsOnly = false;
+    public static float EspItemDistance = 65.0f;
+    public static float EspContainerDistance = 90.0f;
+    public static float EspEnemyDistance = 180.0f;
+    public static float EspNpcDistance = 120.0f;
+    public static float EspScanInterval = 0.75f;
+    public static int EspFontSize = 13;
+    public static int EspIconSize = 20;
+    public static int EspHealthBarWidth = 52;
+    public static int EspMaxObjects = 120;
+
     // V17.1: interface language, 0 = English, 1 = Russian. Public so profiles persist it.
     public static int Language = 0;
 
@@ -136,6 +168,47 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static string[] _materialSubtypeNames = new string[] { "Все", "Алхимия", "Готовка", "Крафт", "Компоненты" };
     static string[] _singleSubtypeNames = new string[] { "Все" };
 
+    // V18.2: optimized ESP cache. ModelsSet is converted through GetManagedEnumerator; reflection accessors are cached.
+    // OnGUI uses cached coordinates/anchors and draws only during Repaint.
+    class EspEntry
+    {
+        public object Source;
+        public object Template;
+        public UnityEngine.Transform Anchor;
+        public UnityEngine.Vector3 Position;
+        public UnityEngine.Vector3 AnchorOffset;
+        public int Kind; // 1 item, 2 container, 3 enemy, 4 npc
+        public string Name;
+        public float Distance;
+        public string HealthText;
+        public float HealthRatio;
+        public string IconText;
+        public string StateText;
+        public bool IsDead;
+        public bool IsEmpty;
+    }
+    static System.Collections.Generic.List<EspEntry> _espEntries = new System.Collections.Generic.List<EspEntry>();
+    static System.Collections.Generic.Dictionary<string, System.Reflection.MethodInfo> _espWorldAllMethods = new System.Collections.Generic.Dictionary<string, System.Reflection.MethodInfo>();
+    static System.Collections.Generic.Dictionary<string, System.Reflection.MethodInfo> _espWorldManagedMethods = new System.Collections.Generic.Dictionary<string, System.Reflection.MethodInfo>();
+    static System.Collections.Generic.Dictionary<string, System.Reflection.MemberInfo> _espMemberCache = new System.Collections.Generic.Dictionary<string, System.Reflection.MemberInfo>();
+    static System.Collections.Generic.Dictionary<string, bool> _espMissingMemberCache = new System.Collections.Generic.Dictionary<string, bool>();
+    static System.Collections.Generic.Dictionary<string, int> _espNpcLocationState = new System.Collections.Generic.Dictionary<string, int>();
+    static System.Reflection.FieldInfo _espPickItemDataField;
+    static float _espNextScan;
+    static int _espVisibleLastFrame;
+    static int _espItemsCached;
+    static int _espContainersCached;
+    static int _espEnemiesCached;
+    static int _espNpcsCached;
+    static int _espCorpsesCached;
+    static int _espItemsRaw;
+    static int _espContainersRaw;
+    static int _espNpcsRaw;
+    static UnityEngine.Camera _espCamera;
+    static float _espNextCameraResolve;
+    static string _espCameraName = "-";
+    static string _espStatus = "ESP готов";
+
     static bool _stealthSaved;
     static float _visOrig, _crouchVisOrig, _noiseOrig, _crouchNoiseOrig;
     static bool _lockSaved;
@@ -178,6 +251,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static UnityEngine.GUIStyle _contentStyle;
     static UnityEngine.GUIStyle _cardStyle;
     static UnityEngine.GUIStyle _resizeGripStyle;
+    static UnityEngine.GUIStyle _espTextStyle;
+    static UnityEngine.Texture2D _texEspBg;
     static UnityEngine.Texture2D _texWindow;
     static UnityEngine.Texture2D _texPanel;
     static UnityEngine.Texture2D _texPanelAlt;
@@ -469,14 +544,632 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                     SyncEditorsFromHero(hero);
                 }
             }
-            if (hero == null) return;
+            if (hero == null)
+            {
+                if (_espEntries.Count > 0) _espEntries.Clear();
+                return;
+            }
             TryAutoLoadStartupProfile(hero);
+            if (EspEnabled) UpdateEspCache(hero);
+            else if (_espEntries.Count > 0) _espEntries.Clear();
             MaintainCheats(hero);
         }
         catch (System.Exception ex)
         {
             _log.LogWarning("[FoATrainer] Update error: " + ex.Message);
         }
+    }
+
+    static System.Collections.IEnumerable WorldAll(string typeName)
+    {
+        try
+        {
+            System.Reflection.MethodInfo gm = null;
+            if (!_espWorldAllMethods.TryGetValue(typeName, out gm) || gm == null)
+            {
+                System.Type modelType = FindType(typeName);
+                System.Type worldType = FindType("Awaken.TG.MVC.World");
+                if (modelType == null || worldType == null)
+                {
+                    _espStatus = "ESP type not found: " + typeName;
+                    return null;
+                }
+                System.Reflection.MethodInfo[] methods = worldType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                for (int i = 0; i < methods.Length; i++)
+                {
+                    System.Reflection.MethodInfo m = methods[i];
+                    if (m.Name != "All" || !m.IsGenericMethodDefinition) continue;
+                    if (m.GetParameters().Length != 0) continue;
+                    gm = m.MakeGenericMethod(new System.Type[] { modelType });
+                    _espWorldAllMethods[typeName] = gm;
+                    break;
+                }
+            }
+            if (gm == null)
+            {
+                _espStatus = "ESP World.All not found";
+                return null;
+            }
+
+            // World.All<T>() returns ModelsSet<T>. ModelsSet<T> intentionally does not implement
+            // IEnumerable directly; its GetManagedEnumerator() does. The old implementation used
+            // `as IEnumerable`, so every ESP scan silently received null.
+            object set = gm.Invoke(null, null);
+            if (set == null) return null;
+            System.Collections.IEnumerable direct = set as System.Collections.IEnumerable;
+            if (direct != null) return direct;
+
+            System.Reflection.MethodInfo managed = null;
+            if (!_espWorldManagedMethods.TryGetValue(typeName, out managed) || managed == null)
+            {
+                managed = set.GetType().GetMethod("GetManagedEnumerator", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (managed != null) _espWorldManagedMethods[typeName] = managed;
+            }
+            if (managed != null)
+            {
+                object enumerable = managed.Invoke(set, null);
+                System.Collections.IEnumerable result = enumerable as System.Collections.IEnumerable;
+                if (result != null) return result;
+            }
+            _espStatus = "ESP ModelsSet enumerator unavailable: " + typeName;
+        }
+        catch (System.Exception ex)
+        {
+            _espStatus = "ESP scan error: " + ex.Message;
+        }
+        return null;
+    }
+
+    static object GetEspProp(object obj, string name)
+    {
+        if (obj == null) return null;
+        try
+        {
+            System.Type t = obj.GetType();
+            string key = t.FullName + "|" + name;
+            System.Reflection.MemberInfo member = null;
+            if (_espMemberCache.TryGetValue(key, out member) && member != null)
+            {
+                System.Reflection.PropertyInfo cp = member as System.Reflection.PropertyInfo;
+                if (cp != null) return cp.GetValue(obj, null);
+                System.Reflection.FieldInfo cf = member as System.Reflection.FieldInfo;
+                if (cf != null) return cf.GetValue(obj);
+            }
+            if (_espMissingMemberCache.ContainsKey(key)) return null;
+
+            System.Reflection.PropertyInfo p = FindProperty(t, name, false);
+            if (p != null)
+            {
+                _espMemberCache[key] = p;
+                return p.GetValue(obj, null);
+            }
+            System.Reflection.FieldInfo f = FindField(t, name);
+            if (f != null)
+            {
+                _espMemberCache[key] = f;
+                return f.GetValue(obj);
+            }
+            _espMissingMemberCache[key] = true;
+        }
+        catch { }
+        return null;
+    }
+
+    static bool IsDiscarded(object obj)
+    {
+        if (obj == null) return true;
+        object a = GetEspProp(obj, "HasBeenDiscarded");
+        if (a != null && ToBool(a)) return true;
+        object b = GetEspProp(obj, "WasDiscarded");
+        if (b != null && ToBool(b)) return true;
+        return false;
+    }
+
+    static bool TryVector3(object value, out UnityEngine.Vector3 result)
+    {
+        result = UnityEngine.Vector3.zero;
+        if (value == null) return false;
+        if (value is UnityEngine.Vector3)
+        {
+            result = (UnityEngine.Vector3)value;
+            return true;
+        }
+        return false;
+    }
+
+    static bool TryEspPosition(object obj, int kind, out UnityEngine.Vector3 position, out UnityEngine.Transform anchor, out UnityEngine.Vector3 anchorOffset)
+    {
+        position = UnityEngine.Vector3.zero;
+        anchor = null;
+        anchorOffset = UnityEngine.Vector3.zero;
+        if (obj == null) return false;
+        try
+        {
+            if (kind == 3 || kind == 4)
+            {
+                object head = GetEspProp(obj, "Head");
+                UnityEngine.Transform headTransform = head as UnityEngine.Transform;
+                if (headTransform != null)
+                {
+                    anchor = headTransform;
+                    anchorOffset = new UnityEngine.Vector3(0f, 0.18f, 0f);
+                    position = headTransform.position + anchorOffset;
+                    return true;
+                }
+            }
+            object coords = GetEspProp(obj, "Coords");
+            if (TryVector3(coords, out position))
+            {
+                if (kind == 3 || kind == 4) position.y += 1.75f;
+                else position.y += 0.30f;
+                return true;
+            }
+            object interaction = GetEspProp(obj, "InteractionPosition");
+            if (TryVector3(interaction, out position))
+            {
+                position.y += 0.25f;
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    static string EspName(object obj, object template, string fallback)
+    {
+        string value = null;
+        object v = GetEspProp(obj, "DisplayName");
+        if (v != null) value = System.Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture);
+        if (string.IsNullOrEmpty(value))
+        {
+            v = GetEspProp(obj, "Name");
+            if (v != null) value = System.Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        if (string.IsNullOrEmpty(value) && template != null)
+        {
+            v = GetEspProp(template, "ItemName");
+            if (v != null) value = System.Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        if (string.IsNullOrEmpty(value)) value = fallback;
+        return value;
+    }
+
+    static bool EspItemTemplateAllowed(object template)
+    {
+        if (template == null) return EspShowItemOther;
+        bool weapon = ToBool(GetEspProp(template, "IsWeapon"));
+        bool armor = ToBool(GetEspProp(template, "IsArmor")) || ToBool(GetEspProp(template, "IsShield"));
+        bool consumable = ToBool(GetEspProp(template, "IsConsumable"));
+        bool material = ToBool(GetEspProp(template, "IsCrafting")) || ToBool(GetEspProp(template, "IsComponent"));
+        bool important = ToBool(GetEspProp(template, "IsImportantItem")) || ToBool(GetEspProp(template, "IsKey"));
+        if (weapon) return EspShowItemWeapons;
+        if (armor) return EspShowItemArmor;
+        if (consumable) return EspShowItemConsumables;
+        if (material) return EspShowItemMaterials;
+        if (important) return EspShowItemImportant;
+        return EspShowItemOther;
+    }
+
+    static string EspObjectId(object obj)
+    {
+        if (obj == null) return "";
+        try
+        {
+            object value = GetEspProp(obj, "ID");
+            if (value == null) return "";
+            return System.Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch { return ""; }
+    }
+
+    static string EspItemIcon(object template)
+    {
+        if (template == null) return "I";
+        if (ToBool(GetEspProp(template, "IsWeapon"))) return "W";
+        if (ToBool(GetEspProp(template, "IsArmor")) || ToBool(GetEspProp(template, "IsShield"))) return "A";
+        if (ToBool(GetEspProp(template, "IsConsumable"))) return "+";
+        if (ToBool(GetEspProp(template, "IsCrafting")) || ToBool(GetEspProp(template, "IsComponent"))) return "M";
+        if (ToBool(GetEspProp(template, "IsImportantItem")) || ToBool(GetEspProp(template, "IsKey"))) return "*";
+        return "I";
+    }
+
+    static bool EspCallIsEmpty(object searchAction)
+    {
+        if (searchAction == null) return false;
+        try
+        {
+            System.Reflection.MethodInfo m = FindMethod(searchAction.GetType(), "IsEmpty", 0);
+            if (m == null) return false;
+            object value = m.Invoke(searchAction, null);
+            return value != null && ToBool(value);
+        }
+        catch { return false; }
+    }
+
+    static bool EspWithinDistance(object source, int kind, UnityEngine.Vector3 heroPos, float maxDistance)
+    {
+        if (source == null) return false;
+        UnityEngine.Vector3 pos;
+        UnityEngine.Transform anchor;
+        UnityEngine.Vector3 anchorOffset;
+        if (!TryEspPosition(source, kind, out pos, out anchor, out anchorOffset)) return false;
+        UnityEngine.Vector3 delta = pos - heroPos;
+        return delta.sqrMagnitude <= maxDistance * maxDistance;
+    }
+
+    static string EspHealthText(object npc, out float ratio)
+    {
+        ratio = -1f;
+        if (npc == null) return "";
+        object health = GetEspProp(npc, "Health");
+        object maxHealth = GetEspProp(npc, "MaxHealth");
+        if (health == null) return "";
+        float current = StatModified(health);
+        float max = maxHealth != null ? StatModified(maxHealth) : StatUpper(health);
+        if (max <= 0.001f) max = StatUpper(health);
+        if (max > 0.001f) ratio = Clamp(current / max, 0f, 1f);
+        return System.Math.Round(current).ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + System.Math.Round(max).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    static void AddEspEntry(object source, object template, int kind, string fallback, UnityEngine.Vector3 heroPos, float maxDistance)
+    {
+        if (source == null || IsDiscarded(source)) return;
+        UnityEngine.Vector3 pos;
+        UnityEngine.Transform anchor;
+        UnityEngine.Vector3 anchorOffset;
+        if (!TryEspPosition(source, kind, out pos, out anchor, out anchorOffset)) return;
+        float distance = UnityEngine.Vector3.Distance(heroPos, pos);
+        if (distance > maxDistance) return;
+        EspEntry entry = new EspEntry();
+        entry.Source = source;
+        entry.Template = template;
+        entry.Anchor = anchor;
+        entry.AnchorOffset = anchorOffset;
+        entry.Position = pos;
+        entry.Kind = kind;
+        entry.Name = EspName(source, template, fallback);
+        entry.Distance = distance;
+        entry.HealthRatio = -1f;
+        entry.HealthText = "";
+        entry.StateText = "";
+        entry.IsDead = false;
+        entry.IsEmpty = false;
+        if (kind == 1) entry.IconText = EspItemIcon(template);
+        else if (kind == 2) entry.IconText = "C";
+        else if (kind == 3) entry.IconText = "X";
+        else entry.IconText = "N";
+        if ((EspShowHealth || EspShowHealthBars) && (kind == 3 || kind == 4))
+            entry.HealthText = EspHealthText(source, out entry.HealthRatio);
+        _espEntries.Add(entry);
+        if (kind == 1) _espItemsCached++;
+        else if (kind == 2) _espContainersCached++;
+        else if (kind == 3) _espEnemiesCached++;
+        else if (kind == 4) _espNpcsCached++;
+    }
+
+    static void AddEspLootEntry(object searchAction, object location, int npcState, UnityEngine.Vector3 heroPos)
+    {
+        if (searchAction == null || location == null || IsDiscarded(location)) return;
+        bool corpse = npcState == 3 || npcState == 4;
+        if (corpse && !EspShowDead) return;
+        if (corpse && npcState == 3 && !EspEnemies) return;
+        if (corpse && npcState == 4 && !EspNpcs) return;
+        if (!corpse && !EspContainers) return;
+
+        int kind = corpse ? (npcState == 3 ? 3 : 4) : 2;
+        float maxDistance = corpse ? (npcState == 3 ? EspEnemyDistance : EspNpcDistance) : EspContainerDistance;
+        if (!EspWithinDistance(location, kind, heroPos, maxDistance)) return;
+
+        bool empty = false;
+        if (EspShowLootState || EspHideEmptyLoot) empty = EspCallIsEmpty(searchAction);
+        if (EspHideEmptyLoot && empty) return;
+
+        int before = _espEntries.Count;
+        AddEspEntry(location, null, kind, corpse ? (Language == 1 ? "Труп" : "Corpse") : (Language == 1 ? "Контейнер" : "Container"), heroPos, maxDistance);
+        if (_espEntries.Count <= before) return;
+        EspEntry entry = _espEntries[_espEntries.Count - 1];
+        entry.IsDead = corpse;
+        entry.IsEmpty = empty;
+        entry.IconText = corpse ? "X" : "C";
+        if (EspShowLootState) entry.StateText = empty ? (Language == 1 ? "ПУСТО" : "EMPTY") : (Language == 1 ? "ЛУТ" : "LOOT");
+        if (corpse) _espCorpsesCached++;
+    }
+
+    static void ScanEspEnumerable(System.Collections.IEnumerable enumerable, int mode, UnityEngine.Vector3 heroPos)
+    {
+        if (enumerable == null) return;
+        System.IDisposable disposable = enumerable as System.IDisposable;
+        try
+        {
+            System.Collections.IEnumerator it = enumerable.GetEnumerator();
+            while (it.MoveNext())
+            {
+                object obj = it.Current;
+                if (obj == null || IsDiscarded(obj)) continue;
+                if (mode == 1) _espItemsRaw++;
+                else if (mode == 2) _espContainersRaw++;
+                else if (mode == 3) _espNpcsRaw++;
+                if (mode == 1)
+                {
+                    object location = GetEspProp(obj, "ParentModel");
+                    if (location == null) continue;
+                    object spawningData = null;
+                    try
+                    {
+                        if (_espPickItemDataField == null) _espPickItemDataField = FindField(obj.GetType(), "_itemSpawningData");
+                        if (_espPickItemDataField != null) spawningData = _espPickItemDataField.GetValue(obj);
+                    }
+                    catch { }
+                    object template = GetEspProp(spawningData, "ItemTemplate");
+                    if (!EspItemTemplateAllowed(template)) continue;
+                    AddEspEntry(location, template, 1, Language == 1 ? "Предмет" : "Item", heroPos, EspItemDistance);
+                }
+                else if (mode == 2)
+                {
+                    // SearchAction is the actual searchable container/corpse interaction.
+                    bool available = ToBool(GetEspProp(obj, "SearchAvailable"));
+                    if (!available) continue;
+                    object location = GetEspProp(obj, "ParentModel");
+                    if (location == null) continue;
+                    string id = EspObjectId(location);
+                    int npcState = 0;
+                    if (!string.IsNullOrEmpty(id)) _espNpcLocationState.TryGetValue(id, out npcState);
+                    // SearchAction on an NPC is a corpse interaction. Living NPC search actions are skipped.
+                    if (npcState == 1 || npcState == 2) continue;
+                    AddEspLootEntry(obj, location, npcState, heroPos);
+                }
+                else if (mode == 3)
+                {
+                    if (ToBool(GetEspProp(obj, "IsDisappeared"))) continue;
+                    bool alive = ToBool(GetEspProp(obj, "IsAlive"));
+                    bool enemy = GetEspProp(obj, "EnemyBaseClass") != null;
+                    object location = GetEspProp(obj, "ParentModel");
+                    string id = EspObjectId(location);
+                    if (!string.IsNullOrEmpty(id)) _espNpcLocationState[id] = alive ? (enemy ? 1 : 2) : (enemy ? 3 : 4);
+                    // Dead NPCs are drawn only from their SearchAction, so they cannot be duplicated as living NPCs.
+                    if (!alive) continue;
+                    if (enemy && EspEnemies)
+                        AddEspEntry(obj, null, 3, Language == 1 ? "Враг" : "Enemy", heroPos, EspEnemyDistance);
+                    else if (!enemy && EspNpcs)
+                        AddEspEntry(obj, null, 4, "NPC", heroPos, EspNpcDistance);
+                }
+            }
+        }
+        catch (System.Exception ex)
+        {
+            _espStatus = "ESP enumerate error: " + ex.Message;
+        }
+        finally
+        {
+            if (disposable != null)
+            {
+                try { disposable.Dispose(); } catch { }
+            }
+        }
+    }
+
+    static void UpdateEspCache(object hero)
+    {
+        float now = UnityEngine.Time.realtimeSinceStartup;
+        // Do not allow old profiles to force an aggressive 0.1-0.35s full scan.
+        float interval = Clamp(EspScanInterval, 0.50f, 3.0f);
+        if (now < _espNextScan) return;
+        _espNextScan = now + interval;
+        UnityEngine.Vector3 heroPos;
+        if (!TryVector3(GetEspProp(hero, "Coords"), out heroPos)) return;
+        _espEntries.Clear();
+        _espNpcLocationState.Clear();
+        _espItemsCached = 0;
+        _espContainersCached = 0;
+        _espEnemiesCached = 0;
+        _espNpcsCached = 0;
+        _espCorpsesCached = 0;
+        _espItemsRaw = 0;
+        _espContainersRaw = 0;
+        _espNpcsRaw = 0;
+        // NPC pass first builds a cheap Location ID state map used by SearchAction corpse detection.
+        if (EspEnemies || EspNpcs || EspContainers || EspShowDead) ScanEspEnumerable(WorldAll("Awaken.TG.Main.Fights.NPCs.NpcElement"), 3, heroPos);
+        if (EspItems) ScanEspEnumerable(WorldAll("Awaken.TG.Main.Locations.Actions.PickItemAction"), 1, heroPos);
+        if (EspContainers || (EspShowDead && (EspEnemies || EspNpcs))) ScanEspEnumerable(WorldAll("Awaken.TG.Main.Locations.Actions.SearchAction"), 2, heroPos);
+        _espEntries.Sort(delegate(EspEntry a, EspEntry b) { return a.Distance.CompareTo(b.Distance); });
+        _espStatus = (Language == 1 ? "Кеш: " : "Cache: ") + _espEntries.Count +
+            " | I " + _espItemsCached + "/" + _espItemsRaw +
+            " C " + _espContainersCached + "/" + _espContainersRaw +
+            " E " + _espEnemiesCached + " N " + _espNpcsCached + " D " + _espCorpsesCached + "/" + _espNpcsRaw;
+    }
+
+    static UnityEngine.Vector3 EspEntryPosition(EspEntry entry)
+    {
+        if (entry == null) return UnityEngine.Vector3.zero;
+        if (entry.Anchor != null) return entry.Anchor.position + entry.AnchorOffset;
+        return entry.Position;
+    }
+
+    static UnityEngine.Camera ResolveEspCamera()
+    {
+        if (_espCamera != null && _espCamera.enabled && _espCamera.gameObject != null && _espCamera.gameObject.activeInHierarchy)
+            return _espCamera;
+        float now = UnityEngine.Time.realtimeSinceStartup;
+        if (now < _espNextCameraResolve) return null;
+        _espNextCameraResolve = now + 1.0f;
+        _espCamera = null;
+        try
+        {
+            UnityEngine.Camera main = UnityEngine.Camera.main;
+            if (main != null && main.enabled && main.gameObject.activeInHierarchy) _espCamera = main;
+            if (_espCamera == null)
+            {
+                UnityEngine.Camera[] cameras = UnityEngine.Camera.allCameras;
+                float bestScore = -1000000f;
+                for (int i = 0; i < cameras.Length; i++)
+                {
+                    UnityEngine.Camera c = cameras[i];
+                    if (c == null || !c.enabled || c.gameObject == null || !c.gameObject.activeInHierarchy) continue;
+                    if (c.targetTexture != null) continue;
+                    float score = c.depth * 1000f + c.pixelWidth * c.pixelHeight * 0.0001f;
+                    if (c.cameraType == UnityEngine.CameraType.Game) score += 100000f;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        _espCamera = c;
+                    }
+                }
+            }
+            _espCameraName = _espCamera != null ? _espCamera.name : "NONE";
+        }
+        catch (System.Exception ex)
+        {
+            _espCameraName = "ERR";
+            _espStatus = "ESP camera error: " + ex.Message;
+        }
+        return _espCamera;
+    }
+
+    static UnityEngine.Color EspColorForKind(int kind)
+    {
+        if (kind == 1) return new UnityEngine.Color(0.35f, 0.86f, 1.00f, 1f);
+        if (kind == 2) return new UnityEngine.Color(1.00f, 0.72f, 0.23f, 1f);
+        if (kind == 3) return new UnityEngine.Color(1.00f, 0.30f, 0.27f, 1f);
+        return new UnityEngine.Color(0.42f, 0.95f, 0.55f, 1f);
+    }
+
+    static UnityEngine.Color EspColorForEntry(EspEntry entry)
+    {
+        if (entry == null) return UnityEngine.Color.white;
+        if (entry.IsDead || entry.IsEmpty) return new UnityEngine.Color(0.62f, 0.64f, 0.68f, 1f);
+        return EspColorForKind(entry.Kind);
+    }
+
+    static float EspDistanceForEntry(EspEntry entry, UnityEngine.Vector3 heroPos, UnityEngine.Vector3 worldPos)
+    {
+        if (entry == null) return 0f;
+        return UnityEngine.Vector3.Distance(heroPos, worldPos);
+    }
+
+    static float EspMaxDistanceForKind(int kind)
+    {
+        if (kind == 1) return EspItemDistance;
+        if (kind == 2) return EspContainerDistance;
+        if (kind == 3) return EspEnemyDistance;
+        return EspNpcDistance;
+    }
+
+    static void DrawEspRect(UnityEngine.Rect rect, UnityEngine.Color color)
+    {
+        UnityEngine.Color old = UnityEngine.GUI.color;
+        UnityEngine.GUI.color = color;
+        UnityEngine.GUI.DrawTexture(rect, UnityEngine.Texture2D.whiteTexture);
+        UnityEngine.GUI.color = old;
+    }
+
+    static void DrawEspOverlay()
+    {
+        _espVisibleLastFrame = 0;
+        if (!EspEnabled) return;
+        if (_espTextStyle == null) return;
+        UnityEngine.Camera camera = ResolveEspCamera();
+        string hud = (Language == 1 ? "ESP ВКЛ" : "ESP ON") + "  |  " + (_espEntries == null ? 0 : _espEntries.Count) + "  |  " + _espCameraName;
+        _espTextStyle.fontSize = 12;
+        _espTextStyle.normal.textColor = new UnityEngine.Color(1.00f, 0.62f, 0.18f, 1f);
+        UnityEngine.Rect hudRect = new UnityEngine.Rect(14f, 14f, 260f, 24f);
+        DrawEspRect(hudRect, new UnityEngine.Color(0.02f, 0.025f, 0.035f, 0.78f));
+        UnityEngine.GUI.Label(hudRect, hud, _espTextStyle);
+        if (_espEntries == null || _espEntries.Count == 0) return;
+        object hero = Hero();
+        if (hero == null) return;
+        if (camera == null)
+        {
+            _espStatus = Language == 1 ? "ESP: игровая камера не найдена" : "ESP: gameplay camera not found";
+            return;
+        }
+        UnityEngine.Vector3 heroPos;
+        if (!TryVector3(GetProp(hero, "Coords"), out heroPos)) return;
+        if (_espTextStyle == null) return;
+        int maxLabels = EspMaxObjects;
+        if (maxLabels < 10) maxLabels = 10;
+        if (maxLabels > 300) maxLabels = 300;
+        int drawn = 0;
+        for (int i = 0; i < _espEntries.Count && drawn < maxLabels; i++)
+        {
+            EspEntry entry = _espEntries[i];
+            if (entry == null) continue;
+            UnityEngine.Vector3 worldPos = EspEntryPosition(entry);
+            float distance = UnityEngine.Vector3.Distance(heroPos, worldPos);
+            if (distance > EspMaxDistanceForKind(entry.Kind)) continue;
+            UnityEngine.Vector3 sp = camera.WorldToScreenPoint(worldPos);
+            if (sp.z <= 0.05f) continue;
+            float x = sp.x;
+            float y = UnityEngine.Screen.height - sp.y;
+            if (x < -80f || x > UnityEngine.Screen.width + 80f || y < -60f || y > UnityEngine.Screen.height + 60f) continue;
+
+            string text = "";
+            if (!EspIconsOnly && EspShowNames) text = entry.Name;
+            if (EspShowDistance)
+            {
+                string dist = System.Math.Round(distance).ToString(System.Globalization.CultureInfo.InvariantCulture) + "m";
+                text = text.Length > 0 ? text + "  [" + dist + "]" : dist;
+            }
+            float hpRatio = entry.HealthRatio;
+            if (EspShowHealth && (entry.Kind == 3 || entry.Kind == 4) && !entry.IsDead && !string.IsNullOrEmpty(entry.HealthText))
+                text = text.Length > 0 ? text + "  HP " + entry.HealthText : "HP " + entry.HealthText;
+            if (EspShowLootState && !string.IsNullOrEmpty(entry.StateText))
+                text = text.Length > 0 ? text + "  [" + entry.StateText + "]" : entry.StateText;
+
+            int iconSize = EspIconSize;
+            if (iconSize < 12) iconSize = 12;
+            if (iconSize > 42) iconSize = 42;
+            bool drawIcon = EspShowIcons && !string.IsNullOrEmpty(entry.IconText);
+            bool drawBar = EspShowHealthBars && !entry.IsDead && hpRatio >= 0f && (entry.Kind == 3 || entry.Kind == 4);
+            if (!drawIcon && text.Length == 0 && !drawBar) continue;
+
+            UnityEngine.Color entryColor = EspColorForEntry(entry);
+            float labelY = y;
+            if (drawIcon)
+            {
+                UnityEngine.Rect badge = new UnityEngine.Rect(x - iconSize * 0.5f, y - iconSize * 0.5f, iconSize, iconSize);
+                DrawEspRect(badge, new UnityEngine.Color(0.02f, 0.025f, 0.035f, 0.82f));
+                int oldSize = _espTextStyle.fontSize;
+                UnityEngine.TextAnchor oldAlign = _espTextStyle.alignment;
+                UnityEngine.Color oldColor = _espTextStyle.normal.textColor;
+                _espTextStyle.fontSize = iconSize > 18 ? iconSize - 8 : 10;
+                _espTextStyle.alignment = UnityEngine.TextAnchor.MiddleCenter;
+                _espTextStyle.normal.textColor = entryColor;
+                UnityEngine.GUI.Label(badge, entry.IconText, _espTextStyle);
+                _espTextStyle.fontSize = oldSize;
+                _espTextStyle.alignment = oldAlign;
+                _espTextStyle.normal.textColor = oldColor;
+                labelY = badge.yMax + 2f;
+            }
+
+            UnityEngine.Rect labelRect = new UnityEngine.Rect(x, labelY, 0f, 0f);
+            if (text.Length > 0)
+            {
+                _espTextStyle.fontSize = EspFontSize < 9 ? 9 : (EspFontSize > 24 ? 24 : EspFontSize);
+                _espTextStyle.normal.textColor = entryColor;
+                UnityEngine.GUIContent gc = new UnityEngine.GUIContent(text);
+                UnityEngine.Vector2 size = _espTextStyle.CalcSize(gc);
+                float w = size.x + 12f;
+                float h = size.y + 8f;
+                labelRect = new UnityEngine.Rect(x - w * 0.5f, labelY, w, h);
+                if (EspShowBackground)
+                    DrawEspRect(labelRect, new UnityEngine.Color(0.02f, 0.025f, 0.035f, 0.72f));
+                UnityEngine.GUI.Label(labelRect, text, _espTextStyle);
+                labelY = labelRect.yMax + 2f;
+            }
+
+            if (drawBar)
+            {
+                int barWidth = EspHealthBarWidth;
+                if (barWidth < 24) barWidth = 24;
+                if (barWidth > 120) barWidth = 120;
+                UnityEngine.Rect barBg = new UnityEngine.Rect(x - barWidth * 0.5f, labelY, barWidth, 3f);
+                DrawEspRect(barBg, new UnityEngine.Color(0.12f, 0.12f, 0.12f, 0.88f));
+                UnityEngine.Color hpColor = hpRatio > 0.55f ? new UnityEngine.Color(0.25f, 0.90f, 0.35f, 0.95f) : (hpRatio > 0.25f ? new UnityEngine.Color(1.00f, 0.70f, 0.18f, 0.95f) : new UnityEngine.Color(1.00f, 0.24f, 0.20f, 0.95f));
+                DrawEspRect(new UnityEngine.Rect(barBg.x, barBg.y, barBg.width * hpRatio, barBg.height), hpColor);
+            }
+            drawn++;
+        }
+        _espVisibleLastFrame = drawn;
     }
 
     static void MaintainCheats(object hero)
@@ -842,6 +1535,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         NoFallDamage = false;
         FreezeDaytime = false;
         TimePassSpeedEnabled = false;
+        EspEnabled = false;
+        _espEntries.Clear();
         _lastAction = "Все переключаемые функции отключены";
     }
 
@@ -863,7 +1558,49 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         d["НАСТРОЙКИ"] = "SETTINGS";
         d["ИГРОК НЕ НАЙДЕН  |  загрузите сохранение"] = "PLAYER NOT FOUND  |  load a save";
         d["ИГРОК НАЙДЕН  |  Последнее действие: "] = "PLAYER FOUND  |  Last action: ";
-        d["Insert / F8 - скрыть/показать  |  тяните правый нижний угол для изменения размера  |  - / + в шапке - быстрый размер"] = "Insert / F8 - hide/show  |  drag the lower-right corner to resize  |  - / + in header - quick resize";
+        d["Insert / F8 - скрыть/показать  |  F6 - ESP  |  тяните правый нижний угол для изменения размера"] = "Insert / F8 - hide/show  |  F6 - ESP  |  drag lower-right corner to resize";
+        d["ESP"] = "ESP";
+        d["Общий ESP"] = "Master ESP";
+        d["ESP продолжает отображаться, когда меню трейнера скрыто."] = "ESP remains visible when the trainer menu is hidden.";
+        d["Объекты ESP"] = "ESP objects";
+        d["Предметы"] = "Items";
+        d["Контейнеры"] = "Containers";
+        d["Враги"] = "Enemies";
+        d["NPC"] = "NPC";
+        d["Показывать мертвых NPC / врагов"] = "Show dead NPCs / enemies";
+        d["Фильтр предметов ESP"] = "ESP item filter";
+        d["Оружие"] = "Weapons";
+        d["Броня и щиты"] = "Armor and shields";
+        d["Расходники"] = "Consumables";
+        d["Материалы"] = "Materials";
+        d["Важные / ключевые предметы"] = "Important / key items";
+        d["Прочие предметы"] = "Other items";
+        d["Дальность ESP"] = "ESP distance";
+        d["Предметы - дальность"] = "Items distance";
+        d["Контейнеры - дальность"] = "Containers distance";
+        d["Враги - дальность"] = "Enemies distance";
+        d["NPC - дальность"] = "NPC distance";
+        d["Отображение ESP"] = "ESP display";
+        d["Название"] = "Name";
+        d["Расстояние"] = "Distance";
+        d["HP врагов / NPC"] = "Enemy / NPC HP";
+        d["Полоски HP"] = "HP bars";
+        d["Ширина полоски HP"] = "HP bar width";
+        d["Статус контейнеров / трупов"] = "Container / corpse status";
+        d["Скрывать пустые контейнеры / трупы"] = "Hide empty containers / corpses";
+        d["Иконки ESP"] = "ESP icon badges";
+        d["Только иконки (без названий)"] = "Icons only (hide names)";
+        d["Размер иконок ESP"] = "ESP icon size";
+        d["Темный фон подписи"] = "Dark label background";
+        d["Размер текста ESP"] = "ESP text size";
+        d["Максимум подписей на экране"] = "Maximum labels on screen";
+        d["Интервал сканирования"] = "Scan interval";
+        d["Статус ESP"] = "ESP status";
+        d["Цвета: предметы - голубой, контейнеры - оранжевый, враги - красный, NPC - зеленый, трупы / пустые - серый."] = "Colors: items - cyan, containers - orange, enemies - red, NPCs - green, corpses / empty - gray.";
+        d["ПЕРЕСКАНИРОВАТЬ ESP"] = "RESCAN ESP";
+        d["ESP готов"] = "ESP ready";
+        d["ESP включен"] = "ESP enabled";
+        d["ESP выключен"] = "ESP disabled";
         d["Основные функции"] = "Core functions";
         d["Урон и расход ресурсов"] = "Damage and resources";
         d["Полет"] = "Flight";
@@ -2393,6 +3130,12 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         bool alt = UnityEngine.Input.GetKey(UnityEngine.KeyCode.LeftAlt) || UnityEngine.Input.GetKey(UnityEngine.KeyCode.RightAlt);
         bool shift = UnityEngine.Input.GetKey(UnityEngine.KeyCode.LeftShift) || UnityEngine.Input.GetKey(UnityEngine.KeyCode.RightShift);
 
+        if (!ctrl && !alt && !shift && UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F6))
+        {
+            EspEnabled = !EspEnabled;
+            if (!EspEnabled) _espEntries.Clear();
+            _lastAction = EspEnabled ? "ESP включен" : "ESP выключен";
+        }
         if (!ctrl && !alt && !shift && UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F7)) SetFlight(!FlightEnabled);
 
         if (shift)
@@ -2517,8 +3260,9 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             ev.Use();
         }
 
+        if (_windowStyle == null && (_menuVisible || EspEnabled)) BuildStyles();
+        if (EspEnabled && ev != null && ev.type == UnityEngine.EventType.Repaint) DrawEspOverlay();
         if (!_menuVisible) return;
-        if (_windowStyle == null) BuildStyles();
 
         if (!_windowPositioned)
         {
@@ -2763,6 +3507,15 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         _resizeGripStyle.fontSize = 15;
         _resizeGripStyle.alignment = UnityEngine.TextAnchor.MiddleCenter;
         SetBackgrounds(_resizeGripStyle, _texPanelAlt, _texAccentDark, _texAccent);
+
+        _texEspBg = SolidTexture(0.02f, 0.025f, 0.035f, 0.72f);
+        _espTextStyle = new UnityEngine.GUIStyle(UnityEngine.GUI.skin.label);
+        _espTextStyle.fontSize = 13;
+        _espTextStyle.fontStyle = UnityEngine.FontStyle.Bold;
+        _espTextStyle.alignment = UnityEngine.TextAnchor.MiddleCenter;
+        _espTextStyle.wordWrap = false;
+        _espTextStyle.clipping = UnityEngine.TextClipping.Overflow;
+        _espTextStyle.padding = new UnityEngine.RectOffset(4, 4, 2, 2);
     }
 
     void ClampWindowToScreen()
@@ -2864,6 +3617,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         if (IgnoreCraftingRequirement) c++; if (InfiniteExp) c++; if (ExpMultiplierEnabled) c++; if (InfiniteProfExp) c++;
         if (ProfExpMultiplierEnabled) c++; if (GameSpeedEnabled) c++; if (MovementSpeedEnabled) c++; if (JumpHeightEnabled) c++;
         if (NoFallDamage) c++; if (FreezeDaytime) c++; if (TimePassSpeedEnabled) c++; if (FlightEnabled) c++;
+        if (EspEnabled) c++;
         return c;
     }
 
@@ -2886,6 +3640,14 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             if (InfiniteExp) c++; if (ExpMultiplierEnabled) c++; if (InfiniteProfExp) c++; if (ProfExpMultiplierEnabled) c++;
             if (GameSpeedEnabled) c++; if (MovementSpeedEnabled) c++; if (JumpHeightEnabled) c++; if (NoFallDamage) c++;
             if (FreezeDaytime) c++; if (TimePassSpeedEnabled) c++;
+        }
+        else if (tab == 5 && EspEnabled)
+        {
+            c++;
+            if (EspItems) c++;
+            if (EspContainers) c++;
+            if (EspEnemies) c++;
+            if (EspNpcs) c++;
         }
         return c;
     }
@@ -2923,7 +3685,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         UnityEngine.GUILayout.BeginHorizontal(UnityEngine.GUILayout.Height(38));
         UnityEngine.GUILayout.BeginVertical(UnityEngine.GUILayout.Width(330));
         UnityEngine.GUILayout.Label("TAINTED GRAIL - TRAINER", _titleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(22));
-        UnityEngine.GUILayout.Label("BepInEx v5 Mono  |  EN / RU  |  v2.5.1", _subtitleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(15));
+        UnityEngine.GUILayout.Label("BepInEx v5 Mono  |  EN / RU  |  v2.6.4", _subtitleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(15));
         UnityEngine.GUILayout.EndVertical();
         UnityEngine.GUILayout.FlexibleSpace();
         UnityEngine.GUILayout.Label(L("Активно: ") + ActiveCheatCount(), _hotkeyStyle, UnityEngine.GUILayout.Width(88), UnityEngine.GUILayout.Height(28));
@@ -2947,7 +3709,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         DrawTabButton("ITEM SPAWNER", 2);
         DrawTabButton("ОПЫТ / ВРЕМЯ", 3);
         DrawTabButton("СТАТЫ", 4);
-        DrawTabButton("НАСТРОЙКИ", 5);
+        DrawTabButton("ESP", 5);
+        DrawTabButton("НАСТРОЙКИ", 6);
         UnityEngine.GUILayout.EndHorizontal();
         UnityEngine.GUILayout.EndVertical();
 
@@ -2965,12 +3728,13 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         else if (_tab == 2) DrawSpawnerTab();
         else if (_tab == 3) DrawExpTimeTab();
         else if (_tab == 4) DrawStatsTab();
+        else if (_tab == 5) DrawEspTab();
         else DrawDiagnosticsTab();
         UnityEngine.GUILayout.EndScrollView();
         UnityEngine.GUILayout.EndVertical();
 
         UnityEngine.GUILayout.Space(4);
-        UnityEngine.GUILayout.Label(L("Insert / F8 - скрыть/показать  |  тяните правый нижний угол для изменения размера  |  - / + в шапке - быстрый размер"), _footerStyle, UnityEngine.GUILayout.Height(18));
+        UnityEngine.GUILayout.Label(L("Insert / F8 - скрыть/показать  |  F6 - ESP  |  тяните правый нижний угол для изменения размера"), _footerStyle, UnityEngine.GUILayout.Height(18));
         UnityEngine.GUILayout.EndVertical();
 
         if (!_windowFullscreen) HandleResizeGrip();
@@ -3211,6 +3975,97 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         ActionInt("Алхимия", ref AlchemyValue, "Alt+0", delegate { ApplyProfStat("Alchemy", AlchemyValue, "Алхимия"); }, 0, 9999);
         ActionInt("Кулинария", ref CookingValue, "Alt+-", delegate { ApplyProfStat("Cooking", CookingValue, "Кулинария"); }, 0, 9999);
         ActionInt("Ремесло", ref HandcraftingValue, "Alt++", delegate { ApplyProfStat("Handcrafting", HandcraftingValue, "Ремесло"); }, 0, 9999);
+    }
+
+    static void SettingFloat(string label, ref float value, float min, float max, string suffix)
+    {
+        UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(38));
+        UnityEngine.GUILayout.Label("◆", _actionMarkerStyle, UnityEngine.GUILayout.Width(24), UnityEngine.GUILayout.Height(27));
+        float labelWidth = UnityEngine.Mathf.Max(220f, _windowRect.width - 390f);
+        UnityEngine.GUILayout.Label(L(label), _actionLabelStyle, UnityEngine.GUILayout.Width(labelWidth), UnityEngine.GUILayout.Height(27));
+        string text = UnityEngine.GUILayout.TextField(value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture), _textFieldStyle, UnityEngine.GUILayout.Width(105), UnityEngine.GUILayout.Height(27));
+        try
+        {
+            float parsed = System.Convert.ToSingle(text.Replace(',', '.'), System.Globalization.CultureInfo.InvariantCulture);
+            value = Clamp(parsed, min, max);
+        }
+        catch { }
+        UnityEngine.GUILayout.Label(suffix, _hotkeyStyle, UnityEngine.GUILayout.Width(55), UnityEngine.GUILayout.Height(27));
+        UnityEngine.GUILayout.EndHorizontal();
+    }
+
+    static void SettingInt(string label, ref int value, int min, int max)
+    {
+        UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(38));
+        UnityEngine.GUILayout.Label("◆", _actionMarkerStyle, UnityEngine.GUILayout.Width(24), UnityEngine.GUILayout.Height(27));
+        float labelWidth = UnityEngine.Mathf.Max(220f, _windowRect.width - 340f);
+        UnityEngine.GUILayout.Label(L(label), _actionLabelStyle, UnityEngine.GUILayout.Width(labelWidth), UnityEngine.GUILayout.Height(27));
+        string text = UnityEngine.GUILayout.TextField(value.ToString(System.Globalization.CultureInfo.InvariantCulture), _textFieldStyle, UnityEngine.GUILayout.Width(105), UnityEngine.GUILayout.Height(27));
+        try
+        {
+            int parsed = System.Convert.ToInt32(text, System.Globalization.CultureInfo.InvariantCulture);
+            if (parsed < min) parsed = min;
+            if (parsed > max) parsed = max;
+            value = parsed;
+        }
+        catch { }
+        UnityEngine.GUILayout.EndHorizontal();
+    }
+
+    void DrawEspTab()
+    {
+        Section("ESP");
+        bool master = Toggle("Общий ESP", EspEnabled, "F6");
+        if (master != EspEnabled)
+        {
+            EspEnabled = master;
+            if (!EspEnabled) _espEntries.Clear();
+            else _espNextScan = 0f;
+        }
+        UnityEngine.GUILayout.Label(L("ESP продолжает отображаться, когда меню трейнера скрыто."), _statusStyle);
+
+        Section("Объекты ESP");
+        EspItems = Toggle("Предметы", EspItems, "");
+        EspContainers = Toggle("Контейнеры", EspContainers, "");
+        EspEnemies = Toggle("Враги", EspEnemies, "");
+        EspNpcs = Toggle("NPC", EspNpcs, "");
+        EspShowDead = Toggle("Показывать мертвых NPC / врагов", EspShowDead, "");
+        EspShowLootState = Toggle("Статус контейнеров / трупов", EspShowLootState, "");
+        EspHideEmptyLoot = Toggle("Скрывать пустые контейнеры / трупы", EspHideEmptyLoot, "");
+
+        Section("Фильтр предметов ESP");
+        EspShowItemWeapons = Toggle("Оружие", EspShowItemWeapons, "");
+        EspShowItemArmor = Toggle("Броня и щиты", EspShowItemArmor, "");
+        EspShowItemConsumables = Toggle("Расходники", EspShowItemConsumables, "");
+        EspShowItemMaterials = Toggle("Материалы", EspShowItemMaterials, "");
+        EspShowItemImportant = Toggle("Важные / ключевые предметы", EspShowItemImportant, "");
+        EspShowItemOther = Toggle("Прочие предметы", EspShowItemOther, "");
+
+        Section("Дальность ESP");
+        SettingFloat("Предметы - дальность", ref EspItemDistance, 5f, 1000f, "m");
+        SettingFloat("Контейнеры - дальность", ref EspContainerDistance, 5f, 1000f, "m");
+        SettingFloat("Враги - дальность", ref EspEnemyDistance, 5f, 2000f, "m");
+        SettingFloat("NPC - дальность", ref EspNpcDistance, 5f, 2000f, "m");
+
+        Section("Отображение ESP");
+        EspShowNames = Toggle("Название", EspShowNames, "");
+        EspShowDistance = Toggle("Расстояние", EspShowDistance, "");
+        EspShowHealth = Toggle("HP врагов / NPC", EspShowHealth, "");
+        EspShowHealthBars = Toggle("Полоски HP", EspShowHealthBars, "");
+        SettingInt("Ширина полоски HP", ref EspHealthBarWidth, 24, 120);
+        EspShowIcons = Toggle("Иконки ESP", EspShowIcons, "");
+        EspIconsOnly = Toggle("Только иконки (без названий)", EspIconsOnly, "");
+        SettingInt("Размер иконок ESP", ref EspIconSize, 12, 42);
+        EspShowBackground = Toggle("Темный фон подписи", EspShowBackground, "");
+        SettingInt("Размер текста ESP", ref EspFontSize, 9, 24);
+        SettingInt("Максимум подписей на экране", ref EspMaxObjects, 10, 500);
+        SettingFloat("Интервал сканирования", ref EspScanInterval, 0.50f, 3.0f, "sec");
+
+        Section("Статус ESP");
+        UnityEngine.GUILayout.Label((Language == 1 ? "В кеше: " : "Cached: ") + _espEntries.Count + (Language == 1 ? "  |  На экране: " : "  |  On screen: ") + _espVisibleLastFrame + "  |  Camera: " + _espCameraName, _statusStyle);
+        UnityEngine.GUILayout.Label(L(_espStatus), _statusStyle);
+        UnityEngine.GUILayout.Label(L("Цвета: предметы - голубой, контейнеры - оранжевый, враги - красный, NPC - зеленый, трупы / пустые - серый."), _statusStyle);
+        if (UnityEngine.GUILayout.Button(L("ПЕРЕСКАНИРОВАТЬ ESP"), _buttonStyle, UnityEngine.GUILayout.Height(30))) _espNextScan = 0f;
     }
 
     void DrawDiagnosticsTab()
