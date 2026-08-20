@@ -158,11 +158,15 @@ A profile stores toggles, multipliers, editor values, flight settings, ESP setti
 
 ## Screenshots
 
-### Main Trainer
+### Settings & Diagnostics — English
 
-![Main Trainer](screenshots/trainer-main.jpg)
+![FoA Trainer V18.4 settings and diagnostics in English](screenshots/settings-en.png)
 
-The repository currently contains one real trainer screenshot. A current ESP screenshot can be added later when an authentic V18.4 capture is available.
+### Settings & Diagnostics — Russian
+
+![FoA Trainer V18.4 settings and diagnostics in Russian](screenshots/settings-ru.png)
+
+Both screenshots show the current V18.4 / 2.6.4 interface with the ESP tab available. A real in-game ESP-overlay screenshot can be added later when one is available.
 
 ## Building from source
 
@@ -188,7 +192,7 @@ This project intentionally uses a bootstrap + runtime-compilation architecture i
 - `src/Bootstrap.reference.cs` — readable C# equivalent of the generated bootstrap
 - `tools/build.py` — standalone bootstrap/DLL generator for V18.4
 - `dist/FoATrainer_V18_4.dll` — confirmed in-game V18.4 binary
-- `screenshots/trainer-main.jpg` — real trainer interface screenshot
+- `screenshots/settings-en.png` and `screenshots/settings-ru.png` — current V18.4 interface screenshots
 
 The repository does not include game assemblies, BepInEx binaries, Harmony binaries, or other proprietary game files.
 
