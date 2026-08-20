@@ -4,9 +4,12 @@
 
 Telegram: [@Captain_S1ow](https://t.me/Captain_S1ow)
 
+![FoA Trainer — BepInEx Mod, ESP, Item Spawner, Flight, EN/RU](assets/foa-trainer-banner.png)
+
 English | [Русский](README_RU.md)
 
 [![Latest Release](https://img.shields.io/github/v/release/Fenrisu1ven/FoA_Trainer?display_name=tag&sort=semver&label=Latest%20Release)](https://github.com/Fenrisu1ven/FoA_Trainer/releases/latest)
+[![Download FoATrainer_V18_4.dll](https://img.shields.io/badge/Download-FoATrainer__V18__4.dll-2ea44f?logo=github)](https://github.com/Fenrisu1ven/FoA_Trainer/releases/download/v2.6.4/FoATrainer_V18_4.dll)
 ![Game: Tainted Grail](https://img.shields.io/badge/Game-Tainted%20Grail-9b7331)
 [![BepInEx 5](https://img.shields.io/badge/BepInEx-5-5b6ee1)](https://github.com/BepInEx/BepInEx/releases)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078d4)
@@ -192,6 +195,7 @@ This project intentionally uses a bootstrap + runtime-compilation architecture i
 - `src/Bootstrap.reference.cs` — readable C# equivalent of the generated bootstrap
 - `tools/build.py` — standalone bootstrap/DLL generator for V18.4
 - `dist/FoATrainer_V18_4.dll` — confirmed in-game V18.4 binary
+- `assets/foa-trainer-banner.png` — FoA Trainer repository banner
 - `screenshots/settings-en.png` and `screenshots/settings-ru.png` — current V18.4 interface screenshots
 
 The repository does not include game assemblies, BepInEx binaries, Harmony binaries, or other proprietary game files.
