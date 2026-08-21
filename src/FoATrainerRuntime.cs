@@ -272,6 +272,18 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     const float MinWindowWidth = 760f;
     const float MinWindowHeight = 600f;
 
+    // IMGUI redraws every frame. Keep the user's raw text while a numeric field is focused so
+    // intermediate values such as "", "-", "1." and "1," are not replaced prematurely.
+    class NumericInputState
+    {
+        public string Text;
+        public bool WasFocused;
+        public bool Initialized;
+        public float LastFloatValue;
+        public int LastIntValue;
+    }
+    static System.Collections.Generic.Dictionary<string, NumericInputState> _numericInputStates = new System.Collections.Generic.Dictionary<string, NumericInputState>();
+
     public static void Start()
     {
         if (Instance != null) return;
@@ -3756,21 +3768,21 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         OneHitKills = Toggle("Сверхурон / убийство с одного удара", OneHitKills, "Num 0");
 
         Section("Урон и расход ресурсов");
-        DamageMultiplierEnabled = ToggleFloat("Множитель урона", DamageMultiplierEnabled, ref DamageMultiplier, "Num .", 0f, 100000f);
-        DefenseMultiplierEnabled = ToggleFloat("Множитель защиты", DefenseMultiplierEnabled, ref DefenseMultiplier, "Num +", 0.01f, 100000f);
-        bool mr = ToggleFloat("Скорость расхода маны", ManaRateEnabled, ref ManaRate, "Num /", 0f, 100f); if (mr != ManaRateEnabled) SetManaRate(mr);
-        bool sr = ToggleFloat("Скорость расхода выносливости", StaminaRateEnabled, ref StaminaRate, "Num *", 0f, 100f); if (sr != StaminaRateEnabled) SetStaminaRate(sr);
+        DamageMultiplierEnabled = ToggleFloat("Множитель урона", DamageMultiplierEnabled, ref DamageMultiplier, "Num .", 0f, 100000f, 0f, 100f);
+        DefenseMultiplierEnabled = ToggleFloat("Множитель защиты", DefenseMultiplierEnabled, ref DefenseMultiplier, "Num +", 0.01f, 100000f, 0.01f, 100f);
+        bool mr = ToggleFloat("Скорость расхода маны", ManaRateEnabled, ref ManaRate, "Num /", 0f, 100f, 0f, 5f); if (mr != ManaRateEnabled) SetManaRate(mr);
+        bool sr = ToggleFloat("Скорость расхода выносливости", StaminaRateEnabled, ref StaminaRate, "Num *", 0f, 100f, 0f, 5f); if (sr != StaminaRateEnabled) SetStaminaRate(sr);
 
         Section("Полет");
-        bool fl = ToggleFloat("Полет / свободное перемещение", FlightEnabled, ref FlightSpeed, "F7", 0.1f, 200f); if (fl != FlightEnabled) SetFlight(fl);
+        bool fl = ToggleFloat("Полет / свободное перемещение", FlightEnabled, ref FlightSpeed, "F7", 0.1f, 200f, 0.1f, 60f); if (fl != FlightEnabled) SetFlight(fl);
         UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(36));
-        float boostLabelWidth = UnityEngine.Mathf.Max(220f, _windowRect.width - 390f);
+        float boostLabelWidth = UnityEngine.Mathf.Max(170f, _windowRect.width - 610f);
         UnityEngine.GUILayout.Label(L("◆"), _actionMarkerStyle, UnityEngine.GUILayout.Width(24), UnityEngine.GUILayout.Height(25));
         UnityEngine.GUILayout.Label(L("Ускорение полета (Shift)"), _actionLabelStyle, UnityEngine.GUILayout.Width(boostLabelWidth), UnityEngine.GUILayout.Height(25));
-        string boostText = UnityEngine.GUILayout.TextField(FlightBoost.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture), _textFieldStyle, UnityEngine.GUILayout.Width(120), UnityEngine.GUILayout.Height(25));
-        try { FlightBoost = Clamp(System.Convert.ToSingle(boostText.Replace(',', '.'), System.Globalization.CultureInfo.InvariantCulture), 1f, 20f); } catch { }
+        NumericFloatField("FlightBoost", ref FlightBoost, 1f, 20f, 96f, 25f);
+        NumericFloatSlider("FlightBoost", ref FlightBoost, 1f, 10f, 170f);
         UnityEngine.GUILayout.FlexibleSpace();
-        UnityEngine.GUILayout.Label("WASD / Space / Ctrl", _hotkeyStyle, UnityEngine.GUILayout.Width(150), UnityEngine.GUILayout.Height(25));
+        UnityEngine.GUILayout.Label("Shift", _hotkeyStyle, UnityEngine.GUILayout.Width(105), UnityEngine.GUILayout.Height(25));
         UnityEngine.GUILayout.EndHorizontal();
         UnityEngine.GUILayout.Label(L("WASD - движение по направлению камеры, Space - вверх, Ctrl - вниз, Shift - ускорение. Полет отключает коллизии персонажа."), _statusStyle);
     }
@@ -3905,12 +3917,10 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
 
             UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(39));
             UnityEngine.GUILayout.Label(L("Кол-во"), _actionLabelStyle, UnityEngine.GUILayout.Width(55));
-            string qtyText = UnityEngine.GUILayout.TextField(_spawnQuantity.ToString(), _textFieldStyle, UnityEngine.GUILayout.Width(75), UnityEngine.GUILayout.Height(27));
-            try { _spawnQuantity = System.Math.Max(1, System.Math.Min(999999, System.Convert.ToInt32(qtyText))); } catch { }
+            NumericIntField("SpawnQuantity", ref _spawnQuantity, 1, 999999, 75f, 27f);
             UnityEngine.GUILayout.Label(L("Уровень"), _actionLabelStyle, UnityEngine.GUILayout.Width(62));
-            string lvlText = UnityEngine.GUILayout.TextField(_spawnLevel.ToString(), _textFieldStyle, UnityEngine.GUILayout.Width(75), UnityEngine.GUILayout.Height(27));
             int oldLevel = _spawnLevel;
-            try { _spawnLevel = System.Math.Max(1, System.Math.Min(9999, System.Convert.ToInt32(lvlText))); } catch { }
+            NumericIntField("SpawnLevel", ref _spawnLevel, 1, 9999, 75f, 27f);
             if (oldLevel != _spawnLevel) _spawnPreview = BuildSpawnPreview(_spawnTemplate);
             UnityEngine.GUILayout.EndHorizontal();
 
@@ -3929,17 +3939,17 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     {
         Section("Опыт");
         InfiniteExp = Toggle("Бесконечный опыт", InfiniteExp, "Alt+Num 1");
-        ExpMultiplierEnabled = ToggleFloat("Множитель опыта", ExpMultiplierEnabled, ref ExpMultiplier, "Alt+Num 2", 0f, 10000f);
+        ExpMultiplierEnabled = ToggleFloat("Множитель опыта", ExpMultiplierEnabled, ref ExpMultiplier, "Alt+Num 2", 0f, 10000f, 0f, 100f);
         InfiniteProfExp = Toggle("Бесконечный опыт мастерства", InfiniteProfExp, "Alt+Num 3");
-        ProfExpMultiplierEnabled = ToggleFloat("Множитель опыта мастерства", ProfExpMultiplierEnabled, ref ProfExpMultiplier, "Alt+Num 4", 0f, 10000f);
+        ProfExpMultiplierEnabled = ToggleFloat("Множитель опыта мастерства", ProfExpMultiplierEnabled, ref ProfExpMultiplier, "Alt+Num 4", 0f, 10000f, 0f, 100f);
 
         Section("Скорость и время");
-        bool gs = ToggleFloat("Скорость игры", GameSpeedEnabled, ref GameSpeed, "Alt+Num 5", 0.05f, 20f); if (gs != GameSpeedEnabled) SetGameSpeed(gs);
-        bool ms = ToggleFloat("Скорость движения", MovementSpeedEnabled, ref MovementSpeed, "Alt+Num 6", 0.05f, 20f); if (ms != MovementSpeedEnabled) SetMovementSpeed(ms);
-        bool jh = ToggleFloat("Высота прыжка", JumpHeightEnabled, ref JumpHeight, "Alt+Num 7", 0.05f, 20f); if (jh != JumpHeightEnabled) SetJumpHeight(jh);
+        bool gs = ToggleFloat("Скорость игры", GameSpeedEnabled, ref GameSpeed, "Alt+Num 5", 0.05f, 20f, 0.05f, 5f); if (gs != GameSpeedEnabled) SetGameSpeed(gs);
+        bool ms = ToggleFloat("Скорость движения", MovementSpeedEnabled, ref MovementSpeed, "Alt+Num 6", 0.05f, 20f, 0.05f, 10f); if (ms != MovementSpeedEnabled) SetMovementSpeed(ms);
+        bool jh = ToggleFloat("Высота прыжка", JumpHeightEnabled, ref JumpHeight, "Alt+Num 7", 0.05f, 20f, 0.05f, 10f); if (jh != JumpHeightEnabled) SetJumpHeight(jh);
         NoFallDamage = Toggle("Нет урона от падений", NoFallDamage, "Alt+Num 8");
         FreezeDaytime = Toggle("Заморозить время суток", FreezeDaytime, "Alt+Num 9");
-        TimePassSpeedEnabled = ToggleFloat("Скорость течения времени", TimePassSpeedEnabled, ref TimePassSpeed, "Alt+Num 0", 0f, 100f);
+        TimePassSpeedEnabled = ToggleFloat("Скорость течения времени", TimePassSpeedEnabled, ref TimePassSpeed, "Alt+Num 0", 0f, 100f, 0f, 10f);
     }
 
     void DrawStatsTab()
@@ -3981,16 +3991,11 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     {
         UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(38));
         UnityEngine.GUILayout.Label("◆", _actionMarkerStyle, UnityEngine.GUILayout.Width(24), UnityEngine.GUILayout.Height(27));
-        float labelWidth = UnityEngine.Mathf.Max(220f, _windowRect.width - 390f);
+        float labelWidth = UnityEngine.Mathf.Max(170f, _windowRect.width - 610f);
         UnityEngine.GUILayout.Label(L(label), _actionLabelStyle, UnityEngine.GUILayout.Width(labelWidth), UnityEngine.GUILayout.Height(27));
-        string text = UnityEngine.GUILayout.TextField(value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture), _textFieldStyle, UnityEngine.GUILayout.Width(105), UnityEngine.GUILayout.Height(27));
-        try
-        {
-            float parsed = System.Convert.ToSingle(text.Replace(',', '.'), System.Globalization.CultureInfo.InvariantCulture);
-            value = Clamp(parsed, min, max);
-        }
-        catch { }
-        UnityEngine.GUILayout.Label(suffix, _hotkeyStyle, UnityEngine.GUILayout.Width(55), UnityEngine.GUILayout.Height(27));
+        NumericFloatField("SettingFloat." + label, ref value, min, max, 90f, 27f);
+        NumericFloatSlider("SettingFloat." + label, ref value, min, max, 180f);
+        UnityEngine.GUILayout.Label(suffix, _hotkeyStyle, UnityEngine.GUILayout.Width(45), UnityEngine.GUILayout.Height(27));
         UnityEngine.GUILayout.EndHorizontal();
     }
 
@@ -3998,17 +4003,10 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     {
         UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(38));
         UnityEngine.GUILayout.Label("◆", _actionMarkerStyle, UnityEngine.GUILayout.Width(24), UnityEngine.GUILayout.Height(27));
-        float labelWidth = UnityEngine.Mathf.Max(220f, _windowRect.width - 340f);
+        float labelWidth = UnityEngine.Mathf.Max(170f, _windowRect.width - 565f);
         UnityEngine.GUILayout.Label(L(label), _actionLabelStyle, UnityEngine.GUILayout.Width(labelWidth), UnityEngine.GUILayout.Height(27));
-        string text = UnityEngine.GUILayout.TextField(value.ToString(System.Globalization.CultureInfo.InvariantCulture), _textFieldStyle, UnityEngine.GUILayout.Width(105), UnityEngine.GUILayout.Height(27));
-        try
-        {
-            int parsed = System.Convert.ToInt32(text, System.Globalization.CultureInfo.InvariantCulture);
-            if (parsed < min) parsed = min;
-            if (parsed > max) parsed = max;
-            value = parsed;
-        }
-        catch { }
+        NumericIntField("SettingInt." + label, ref value, min, max, 90f, 27f);
+        NumericIntSlider("SettingInt." + label, ref value, min, max, 180f);
         UnityEngine.GUILayout.EndHorizontal();
     }
 
@@ -4161,23 +4159,165 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         return nv;
     }
 
-    static bool ToggleFloat(string label, bool enabled, ref float value, string hotkey, float min, float max)
+    static bool TryParseFlexibleFloat(string text, out float value)
+    {
+        value = 0f;
+        if (text == null) return false;
+        string normalized = text.Trim().Replace(',', '.');
+        if (normalized.Length == 0 || normalized == "+" || normalized == "-" || normalized == "." || normalized == "+." || normalized == "-.") return false;
+        float parsed;
+        if (!float.TryParse(normalized, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsed)) return false;
+        if (float.IsNaN(parsed) || float.IsInfinity(parsed)) return false;
+        value = parsed;
+        return true;
+    }
+
+    static string FormatFloat(float value)
+    {
+        return value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    static NumericInputState GetNumericInputState(string controlName, string initialText)
+    {
+        NumericInputState state;
+        if (!_numericInputStates.TryGetValue(controlName, out state))
+        {
+            state = new NumericInputState();
+            state.Text = initialText;
+            _numericInputStates[controlName] = state;
+        }
+        return state;
+    }
+
+    static void NumericFloatField(string key, ref float value, float min, float max, float width, float height)
+    {
+        string controlName = "FoATrainer.Float." + key;
+        NumericInputState state = GetNumericInputState(controlName, FormatFloat(value));
+        bool focusedBefore = UnityEngine.GUI.GetNameOfFocusedControl() == controlName;
+        if (!state.Initialized || (!focusedBefore && !state.WasFocused && UnityEngine.Mathf.Abs(state.LastFloatValue - value) > 0.0001f))
+            state.Text = FormatFloat(value);
+
+        UnityEngine.GUI.SetNextControlName(controlName);
+        state.Text = UnityEngine.GUILayout.TextField(state.Text, _textFieldStyle, UnityEngine.GUILayout.Width(width), UnityEngine.GUILayout.Height(height));
+
+        float parsed;
+        if (TryParseFlexibleFloat(state.Text, out parsed)) value = Clamp(parsed, min, max);
+
+        bool focusedAfter = UnityEngine.GUI.GetNameOfFocusedControl() == controlName;
+        UnityEngine.Event current = UnityEngine.Event.current;
+        bool finishWithEnter = focusedAfter && current != null && current.type == UnityEngine.EventType.KeyDown &&
+            (current.keyCode == UnityEngine.KeyCode.Return || current.keyCode == UnityEngine.KeyCode.KeypadEnter);
+        if ((state.WasFocused && !focusedAfter) || finishWithEnter)
+        {
+            state.Text = FormatFloat(value);
+            if (finishWithEnter)
+            {
+                UnityEngine.GUI.FocusControl("");
+                current.Use();
+                focusedAfter = false;
+            }
+        }
+        state.WasFocused = focusedAfter;
+        state.LastFloatValue = value;
+        state.Initialized = true;
+    }
+
+    static void NumericIntField(string key, ref int value, int min, int max, float width, float height)
+    {
+        string controlName = "FoATrainer.Int." + key;
+        NumericInputState state = GetNumericInputState(controlName, value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        bool focusedBefore = UnityEngine.GUI.GetNameOfFocusedControl() == controlName;
+        if (!state.Initialized || (!focusedBefore && !state.WasFocused && state.LastIntValue != value))
+            state.Text = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        UnityEngine.GUI.SetNextControlName(controlName);
+        state.Text = UnityEngine.GUILayout.TextField(state.Text, _textFieldStyle, UnityEngine.GUILayout.Width(width), UnityEngine.GUILayout.Height(height));
+
+        int parsed;
+        if (int.TryParse(state.Text.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out parsed))
+        {
+            if (parsed < min) parsed = min;
+            if (parsed > max) parsed = max;
+            value = parsed;
+        }
+
+        bool focusedAfter = UnityEngine.GUI.GetNameOfFocusedControl() == controlName;
+        UnityEngine.Event current = UnityEngine.Event.current;
+        bool finishWithEnter = focusedAfter && current != null && current.type == UnityEngine.EventType.KeyDown &&
+            (current.keyCode == UnityEngine.KeyCode.Return || current.keyCode == UnityEngine.KeyCode.KeypadEnter);
+        if ((state.WasFocused && !focusedAfter) || finishWithEnter)
+        {
+            state.Text = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (finishWithEnter)
+            {
+                UnityEngine.GUI.FocusControl("");
+                current.Use();
+                focusedAfter = false;
+            }
+        }
+        state.WasFocused = focusedAfter;
+        state.LastIntValue = value;
+        state.Initialized = true;
+    }
+
+    static void SyncNumericFloatText(string key, float value)
+    {
+        string controlName = "FoATrainer.Float." + key;
+        NumericInputState state = GetNumericInputState(controlName, FormatFloat(value));
+        state.Text = FormatFloat(value);
+        state.LastFloatValue = value;
+        state.WasFocused = false;
+        state.Initialized = true;
+    }
+
+    static void SyncNumericIntText(string key, int value)
+    {
+        string controlName = "FoATrainer.Int." + key;
+        NumericInputState state = GetNumericInputState(controlName, value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        state.Text = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        state.LastIntValue = value;
+        state.WasFocused = false;
+        state.Initialized = true;
+    }
+
+    static void NumericFloatSlider(string key, ref float value, float sliderMin, float sliderMax, float width)
+    {
+        bool changedBefore = UnityEngine.GUI.changed;
+        UnityEngine.GUI.changed = false;
+        float sliderValue = UnityEngine.GUILayout.HorizontalSlider(Clamp(value, sliderMin, sliderMax), sliderMin, sliderMax, UnityEngine.GUILayout.Width(width));
+        bool sliderChanged = UnityEngine.GUI.changed;
+        UnityEngine.GUI.changed = changedBefore || sliderChanged;
+        if (!sliderChanged) return;
+        value = Clamp(sliderValue, sliderMin, sliderMax);
+        SyncNumericFloatText(key, value);
+    }
+
+    static void NumericIntSlider(string key, ref int value, int sliderMin, int sliderMax, float width)
+    {
+        bool changedBefore = UnityEngine.GUI.changed;
+        UnityEngine.GUI.changed = false;
+        float sliderValue = UnityEngine.GUILayout.HorizontalSlider(UnityEngine.Mathf.Clamp(value, sliderMin, sliderMax), sliderMin, sliderMax, UnityEngine.GUILayout.Width(width));
+        bool sliderChanged = UnityEngine.GUI.changed;
+        UnityEngine.GUI.changed = changedBefore || sliderChanged;
+        if (!sliderChanged) return;
+        value = UnityEngine.Mathf.RoundToInt(sliderValue);
+        if (value < sliderMin) value = sliderMin;
+        if (value > sliderMax) value = sliderMax;
+        SyncNumericIntText(key, value);
+    }
+
+    static bool ToggleFloat(string label, bool enabled, ref float value, string hotkey, float min, float max, float sliderMin, float sliderMax)
     {
         UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(40));
         bool nv = enabled;
         UnityEngine.GUIStyle markerStyle = enabled ? _toggleMarkerOnStyle : _toggleMarkerOffStyle;
         if (UnityEngine.GUILayout.Button(enabled ? L("ВКЛ") : L("ВЫКЛ"), markerStyle, UnityEngine.GUILayout.Width(58), UnityEngine.GUILayout.Height(28))) nv = !enabled;
-        float labelWidth = UnityEngine.Mathf.Max(200f, _windowRect.width - 440f);
+        float labelWidth = UnityEngine.Mathf.Max(165f, _windowRect.width - 650f);
         if (UnityEngine.GUILayout.Button(L(label), _toggleLabelStyle, UnityEngine.GUILayout.Width(labelWidth), UnityEngine.GUILayout.Height(28))) nv = !enabled;
-        string text = UnityEngine.GUILayout.TextField(value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), _textFieldStyle, UnityEngine.GUILayout.Width(120), UnityEngine.GUILayout.Height(28));
-        try
-        {
-            float parsed = System.Convert.ToSingle(text.Replace(',', '.'), System.Globalization.CultureInfo.InvariantCulture);
-            value = Clamp(parsed, min, max);
-        }
-        catch { }
+        NumericFloatField("ToggleFloat." + label, ref value, min, max, 96f, 28f);
+        NumericFloatSlider("ToggleFloat." + label, ref value, sliderMin, sliderMax, 165f);
         UnityEngine.GUILayout.FlexibleSpace();
-        UnityEngine.GUILayout.Label(hotkey, _hotkeyStyle, UnityEngine.GUILayout.Width(125), UnityEngine.GUILayout.Height(28));
+        UnityEngine.GUILayout.Label(hotkey, _hotkeyStyle, UnityEngine.GUILayout.Width(105), UnityEngine.GUILayout.Height(28));
         UnityEngine.GUILayout.EndHorizontal();
         return nv;
     }
@@ -4190,15 +4330,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         UnityEngine.GUILayout.Label("◆", _actionMarkerStyle, UnityEngine.GUILayout.Width(24), UnityEngine.GUILayout.Height(25));
         float labelWidth = UnityEngine.Mathf.Max(196f, _windowRect.width - 479f);
         UnityEngine.GUILayout.Label(L(label), _actionLabelStyle, UnityEngine.GUILayout.Width(labelWidth), UnityEngine.GUILayout.Height(25));
-        string text = UnityEngine.GUILayout.TextField(value.ToString(System.Globalization.CultureInfo.InvariantCulture), _textFieldStyle, UnityEngine.GUILayout.Width(120), UnityEngine.GUILayout.Height(25));
-        try
-        {
-            int parsed = System.Convert.ToInt32(text, System.Globalization.CultureInfo.InvariantCulture);
-            if (parsed < min) parsed = min;
-            if (parsed > max) parsed = max;
-            value = parsed;
-        }
-        catch { }
+        NumericIntField("ActionInt." + label, ref value, min, max, 120f, 25f);
         if (UnityEngine.GUILayout.Button(L("ПРИМЕНИТЬ"), _buttonStyle, UnityEngine.GUILayout.Width(105), UnityEngine.GUILayout.Height(25))) action();
         UnityEngine.GUILayout.FlexibleSpace();
         UnityEngine.GUILayout.Label(hotkey, _hotkeyStyle, UnityEngine.GUILayout.Width(125), UnityEngine.GUILayout.Height(25));
