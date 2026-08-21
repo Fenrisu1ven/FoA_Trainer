@@ -226,6 +226,30 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static string _espCameraName = "-";
     static string _espStatus = "ESP готов";
 
+    // V19: native weather control. Weather settings intentionally live in BepInEx Config,
+    // not in trainer profiles, so older profiles remain compatible and cannot silently
+    // overwrite the user's weather preference.
+    static BepInEx.Configuration.ConfigFile _weatherConfig;
+    static BepInEx.Configuration.ConfigEntry<bool> _weatherOverrideConfig;
+    static BepInEx.Configuration.ConfigEntry<int> _weatherPresetConfig;
+    static bool _weatherOverrideEnabled;
+    static int _selectedWeatherPreset;
+    static object _weatherController;
+    static System.Array _weatherPresets;
+    static System.Collections.Generic.List<string> _weatherPresetNames = new System.Collections.Generic.List<string>();
+    static System.Reflection.FieldInfo _weatherPresetsField;
+    static System.Reflection.FieldInfo _weatherCurrentIndexField;
+    static System.Reflection.FieldInfo _weatherPresetNameField;
+    static System.Reflection.MethodInfo _weatherSetPresetMethod;
+    static float _weatherNextRefresh;
+    static int _weatherCurrentIndex = -1;
+    static float _weatherPrecipitationIntensity;
+    static float _weatherRainIntensity;
+    static float _weatherSnowIntensity;
+    static bool _weatherHeavyRain;
+    static bool _weatherDropdownOpen;
+    static string _weatherStatus = "Погодная система еще не загружена";
+
     static bool _stealthSaved;
     static float _visOrig, _crouchVisOrig, _noiseOrig, _crouchNoiseOrig;
     static bool _lockSaved;
@@ -335,6 +359,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             RefreshProfiles();
             PrepareStartupProfile();
             PrimeStartupProfile();
+            InitializeWeatherConfig();
             _log.LogInfo("[FoATrainer] Runtime started. Patches: " + _patchOk + ", missing: " + _patchErrors.Count);
         }
         catch (System.Exception ex)
@@ -567,6 +592,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         {
             HandleHotkeys();
             HandleContinuousResize();
+            MaintainWeatherControl();
             if (_menuVisible)
             {
                 UnityEngine.Cursor.lockState = UnityEngine.CursorLockMode.None;
@@ -656,6 +682,229 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             _espStatus = "ESP scan error: " + ex.Message;
         }
         return null;
+    }
+
+    // ============================ V19: native weather ============================
+    static void InitializeWeatherConfig()
+    {
+        if (_weatherConfig != null) return;
+        try
+        {
+            UnityEngine.Object[] plugins = UnityEngine.Object.FindObjectsOfType(typeof(BepInEx.BaseUnityPlugin));
+            for (int i = 0; i < plugins.Length; i++)
+            {
+                BepInEx.BaseUnityPlugin plugin = plugins[i] as BepInEx.BaseUnityPlugin;
+                if (plugin == null || plugin.Info == null || plugin.Info.Metadata == null) continue;
+                if (plugin.Info.Metadata.GUID == "rijiy.foa.trainer.v19")
+                {
+                    _weatherConfig = plugin.Config;
+                    break;
+                }
+            }
+            if (_weatherConfig == null)
+            {
+                string path = System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "rijiy.foa.trainer.v19.weather.cfg");
+                _weatherConfig = new BepInEx.Configuration.ConfigFile(path, true);
+            }
+
+            _weatherOverrideConfig = _weatherConfig.Bind<bool>(
+                "Weather",
+                "ForcePreset",
+                false,
+                "Hold the selected native weather preset. False leaves weather under normal game control.");
+            _weatherPresetConfig = _weatherConfig.Bind<int>(
+                "Weather",
+                "PresetIndex",
+                0,
+                "Zero-based index from the native WeatherController preset list.");
+            _weatherOverrideEnabled = _weatherOverrideConfig.Value;
+            _selectedWeatherPreset = System.Math.Max(0, _weatherPresetConfig.Value);
+        }
+        catch (System.Exception ex)
+        {
+            _weatherStatus = "Ошибка BepInEx Config: " + ex.Message;
+            if (_log != null) _log.LogWarning("[FoATrainer] Weather config error: " + ex.Message);
+        }
+    }
+
+    static void SaveWeatherConfig()
+    {
+        try
+        {
+            if (_weatherOverrideConfig != null) _weatherOverrideConfig.Value = _weatherOverrideEnabled;
+            if (_weatherPresetConfig != null) _weatherPresetConfig.Value = _selectedWeatherPreset;
+            if (_weatherConfig != null) _weatherConfig.Save();
+        }
+        catch (System.Exception ex)
+        {
+            if (_log != null) _log.LogWarning("[FoATrainer] Weather config save error: " + ex.Message);
+        }
+    }
+
+    static object FindWeatherController()
+    {
+        System.Collections.IEnumerable all = WorldAll("Awaken.TG.Graphics.WeatherController");
+        if (all == null) return null;
+        try
+        {
+            foreach (object model in all)
+            {
+                if (model != null && !IsDiscarded(model)) return model;
+            }
+        }
+        catch (System.Exception ex)
+        {
+            _weatherStatus = "Ошибка поиска WeatherController: " + ex.Message;
+        }
+        return null;
+    }
+
+    static void ResetWeatherAccessors(object controller)
+    {
+        _weatherController = controller;
+        _weatherPresets = null;
+        _weatherPresetNames.Clear();
+        _weatherCurrentIndex = -1;
+        _weatherPresetsField = null;
+        _weatherCurrentIndexField = null;
+        _weatherPresetNameField = null;
+        _weatherSetPresetMethod = null;
+        if (controller == null) return;
+
+        System.Type type = controller.GetType();
+        _weatherPresetsField = FindField(type, "_presets");
+        _weatherCurrentIndexField = FindField(type, "_currentIndex");
+        _weatherSetPresetMethod = FindMethod(type, "SetPreset", 1);
+    }
+
+    static void RefreshWeatherPresets()
+    {
+        if (_weatherController == null || _weatherPresetsField == null) return;
+        System.Array presets = null;
+        try { presets = _weatherPresetsField.GetValue(_weatherController) as System.Array; }
+        catch { }
+        if (presets == null) return;
+        if (object.ReferenceEquals(presets, _weatherPresets) && _weatherPresetNames.Count == presets.Length) return;
+
+        _weatherPresets = presets;
+        _weatherPresetNames.Clear();
+        System.Type presetType = presets.GetType().GetElementType();
+        _weatherPresetNameField = presetType == null ? null : FindField(presetType, "name");
+        for (int i = 0; i < presets.Length; i++)
+        {
+            string name = "";
+            try
+            {
+                object preset = presets.GetValue(i);
+                object value = _weatherPresetNameField == null || preset == null ? null : _weatherPresetNameField.GetValue(preset);
+                name = value == null ? "" : System.Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch { }
+            if (string.IsNullOrEmpty(name)) name = "Preset " + (i + 1);
+            _weatherPresetNames.Add(name);
+        }
+
+        if (_weatherPresetNames.Count > 0 && _selectedWeatherPreset >= _weatherPresetNames.Count)
+        {
+            _selectedWeatherPreset = 0;
+            SaveWeatherConfig();
+        }
+    }
+
+    static string WeatherPresetName(int index)
+    {
+        if (index >= 0 && index < _weatherPresetNames.Count) return _weatherPresetNames[index];
+        return index >= 0 ? "Preset " + (index + 1) : "-";
+    }
+
+    static bool ApplyWeatherPreset(int index, bool announce)
+    {
+        if (_weatherController == null || _weatherSetPresetMethod == null) return false;
+        if (index < 0 || index >= _weatherPresetNames.Count) return false;
+        try
+        {
+            _weatherSetPresetMethod.Invoke(_weatherController, new object[] { index });
+            _weatherCurrentIndex = index;
+            if (announce) _lastAction = "Погода: " + WeatherPresetName(index);
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            _weatherStatus = "Ошибка применения погоды: " + ex.Message;
+            if (_log != null) _log.LogWarning("[FoATrainer] SetPreset error: " + ex.Message);
+            return false;
+        }
+    }
+
+    static void SetWeatherOverride(bool enabled)
+    {
+        _weatherOverrideEnabled = enabled;
+        _weatherDropdownOpen = false;
+        SaveWeatherConfig();
+        if (enabled)
+        {
+            ApplyWeatherPreset(_selectedWeatherPreset, true);
+            _lastAction = "Принудительная погода: " + WeatherPresetName(_selectedWeatherPreset);
+        }
+        else
+        {
+            // Do not call ResumePrecipitation here: quests can intentionally stop rain.
+            // The native controller remains active and resumes its own scheduled changes.
+            _lastAction = "Погода: автоматический режим";
+        }
+    }
+
+    static void SelectWeatherPreset(int index)
+    {
+        if (index < 0 || index >= _weatherPresetNames.Count) return;
+        _selectedWeatherPreset = index;
+        _weatherOverrideEnabled = true;
+        _weatherDropdownOpen = false;
+        SaveWeatherConfig();
+        ApplyWeatherPreset(index, true);
+    }
+
+    static void MaintainWeatherControl()
+    {
+        if (UnityEngine.Time.unscaledTime < _weatherNextRefresh) return;
+        _weatherNextRefresh = UnityEngine.Time.unscaledTime + 0.5f;
+        try
+        {
+            if (_weatherConfig == null) InitializeWeatherConfig();
+            if (_weatherController == null || IsDiscarded(_weatherController))
+            {
+                ResetWeatherAccessors(FindWeatherController());
+            }
+            if (_weatherController == null)
+            {
+                _weatherStatus = "Погодная система еще не загружена";
+                return;
+            }
+
+            RefreshWeatherPresets();
+            if (_weatherCurrentIndexField != null)
+            {
+                try { _weatherCurrentIndex = ToInt(_weatherCurrentIndexField.GetValue(_weatherController), -1); }
+                catch { _weatherCurrentIndex = -1; }
+            }
+            _weatherPrecipitationIntensity = ToFloat(GetProp(_weatherController, "PrecipitationIntensity"), 0f);
+            _weatherRainIntensity = ToFloat(GetProp(_weatherController, "RainIntensity"), 0f);
+            _weatherSnowIntensity = ToFloat(GetProp(_weatherController, "SnowIntensity"), 0f);
+            _weatherHeavyRain = ToBool(GetProp(_weatherController, "HeavyRain"));
+
+            if (_weatherOverrideEnabled && _weatherPresetNames.Count > 0 && _weatherCurrentIndex != _selectedWeatherPreset)
+            {
+                ApplyWeatherPreset(_selectedWeatherPreset, false);
+            }
+            _weatherStatus = _weatherPresetNames.Count > 0
+                ? "WeatherController: " + _weatherPresetNames.Count + " presets"
+                : "WeatherController: preset list unavailable";
+        }
+        catch (System.Exception ex)
+        {
+            _weatherStatus = "WeatherController: " + ex.Message;
+            if (_log != null) _log.LogWarning("[FoATrainer] Weather update error: " + ex.Message);
+        }
     }
 
     static object GetEspProp(object obj, string name)
@@ -1651,6 +1900,11 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     // ============================ V8: Disable all ============================
     static void DisableAllFunctions()
     {
+        DisableAllFunctions(true);
+    }
+
+    static void DisableAllFunctions(bool includeWeather)
+    {
         SetStealth(false);
         SetEasyLock(false);
         SetManaRate(false);
@@ -1682,6 +1936,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         TimePassSpeedEnabled = false;
         EspEnabled = false;
         _espEntries.Clear();
+        if (includeWeather) SetWeatherOverride(false);
         _lastAction = "Все переключаемые функции отключены";
     }
 
@@ -1756,6 +2011,13 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         d["ESP выключен"] = "ESP disabled";
         d["Основные функции"] = "Core functions";
         d["Урон и расход ресурсов"] = "Damage and resources";
+        d["Передвижение и физика"] = "Movement and physics";
+        d["Скорость игры и время"] = "Game speed and time";
+        d["Погода"] = "Weather";
+        d["Принудительная погода"] = "Forced weather";
+        d["Выбор погоды"] = "Weather selection";
+        d["Автоматически / По умолчанию"] = "Automatic / Default";
+        d["Используются только штатные пресеты и переходы игры. Автоматический режим возвращает управление игре."] = "Only native game presets and transitions are used. Automatic mode returns control to the game.";
         d["Полет"] = "Flight";
         d["Валюта и вес"] = "Currency and weight";
         d["Количество предметов"] = "Item quantities";
@@ -2272,7 +2534,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                 values[lines[i].Substring(0, eq)] = lines[i].Substring(eq + 1);
             }
 
-            DisableAllFunctions();
+            // Weather is stored independently in BepInEx Config and is not part of profiles.
+            DisableAllFunctions(false);
             // Backward-compatible defaults for profiles created before the new ESP categories.
             // Friendly NPCs previously followed the generic NPC toggle; merchants were usually
             // included in enemies because EnemyBaseClass was the old classifier.
@@ -3792,7 +4055,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         if (IgnoreCraftingRequirement) c++; if (InfiniteExp) c++; if (ExpMultiplierEnabled) c++; if (InfiniteProfExp) c++;
         if (ProfExpMultiplierEnabled) c++; if (GameSpeedEnabled) c++; if (MovementSpeedEnabled) c++; if (JumpHeightEnabled) c++;
         if (NoFallDamage) c++; if (FreezeDaytime) c++; if (TimePassSpeedEnabled) c++; if (FlightEnabled) c++;
-        if (EspEnabled) c++;
+        if (EspEnabled) c++; if (_weatherOverrideEnabled) c++;
         return c;
     }
 
@@ -3804,7 +4067,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             if (GodMode) c++; if (InfiniteHealth) c++; if (InfiniteMana) c++; if (InfiniteStamina) c++;
             if (InfiniteKingsPower) c++; if (InfiniteOxygen) c++; if (ItemsWontDecrease) c++; if (StealthMode) c++;
             if (EasyLockPicking) c++; if (OneHitKills) c++; if (DamageMultiplierEnabled) c++; if (DefenseMultiplierEnabled) c++;
-            if (ManaRateEnabled) c++; if (StaminaRateEnabled) c++; if (FlightEnabled) c++;
+            if (ManaRateEnabled) c++; if (StaminaRateEnabled) c++; if (MovementSpeedEnabled) c++; if (JumpHeightEnabled) c++;
+            if (NoFallDamage) c++; if (FlightEnabled) c++;
         }
         else if (tab == 1)
         {
@@ -3813,8 +4077,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         else if (tab == 3)
         {
             if (InfiniteExp) c++; if (ExpMultiplierEnabled) c++; if (InfiniteProfExp) c++; if (ProfExpMultiplierEnabled) c++;
-            if (GameSpeedEnabled) c++; if (MovementSpeedEnabled) c++; if (JumpHeightEnabled) c++; if (NoFallDamage) c++;
-            if (FreezeDaytime) c++; if (TimePassSpeedEnabled) c++;
+            if (GameSpeedEnabled) c++; if (FreezeDaytime) c++; if (TimePassSpeedEnabled) c++;
+            if (_weatherOverrideEnabled) c++;
         }
         else if (tab == 5 && EspEnabled)
         {
@@ -4117,6 +4381,70 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         bool gs = ToggleFloat("Скорость игры", GameSpeedEnabled, ref GameSpeed, "Alt+Num 5", 0.05f, 20f, 0.05f, 5f); if (gs != GameSpeedEnabled) SetGameSpeed(gs);
         FreezeDaytime = Toggle("Заморозить время суток", FreezeDaytime, "Alt+Num 9");
         TimePassSpeedEnabled = ToggleFloat("Скорость течения времени", TimePassSpeedEnabled, ref TimePassSpeed, "Alt+Num 0", 0f, 100f, 0f, 10f);
+
+        DrawWeatherSection();
+    }
+
+    void DrawWeatherSection()
+    {
+        Section("Погода");
+        bool forced = Toggle("Принудительная погода", _weatherOverrideEnabled, "");
+        if (forced != _weatherOverrideEnabled) SetWeatherOverride(forced);
+
+        UnityEngine.GUILayout.BeginHorizontal(_cardStyle, UnityEngine.GUILayout.Height(40));
+        UnityEngine.GUILayout.Label(L("Выбор погоды"), _actionLabelStyle, UnityEngine.GUILayout.Width(190), UnityEngine.GUILayout.Height(27));
+        string selected = _weatherOverrideEnabled ? WeatherPresetName(_selectedWeatherPreset) : L("Автоматически / По умолчанию");
+        if (UnityEngine.GUILayout.Button(selected, _buttonStyle, UnityEngine.GUILayout.Height(27))) _weatherDropdownOpen = !_weatherDropdownOpen;
+        UnityEngine.GUILayout.EndHorizontal();
+
+        if (_weatherDropdownOpen)
+        {
+            UnityEngine.GUILayout.BeginVertical(_cardStyle);
+            if (UnityEngine.GUILayout.Button(L("Автоматически / По умолчанию"), !_weatherOverrideEnabled ? _tabActiveStyle : _tabStyle, UnityEngine.GUILayout.Height(28)))
+            {
+                SetWeatherOverride(false);
+            }
+            int columns = _windowRect.width >= 1050f ? 3 : 2;
+            for (int i = 0; i < _weatherPresetNames.Count; i += columns)
+            {
+                UnityEngine.GUILayout.BeginHorizontal();
+                for (int c = 0; c < columns; c++)
+                {
+                    int index = i + c;
+                    if (index < _weatherPresetNames.Count)
+                    {
+                        bool active = _weatherOverrideEnabled && index == _selectedWeatherPreset;
+                        if (UnityEngine.GUILayout.Button(_weatherPresetNames[index], active ? _tabActiveStyle : _tabStyle, UnityEngine.GUILayout.Height(28))) SelectWeatherPreset(index);
+                    }
+                    else UnityEngine.GUILayout.FlexibleSpace();
+                }
+                UnityEngine.GUILayout.EndHorizontal();
+            }
+            UnityEngine.GUILayout.EndVertical();
+        }
+
+        string currentName = WeatherPresetName(_weatherCurrentIndex);
+        string details;
+        if (_weatherController == null)
+        {
+            details = Language == 0 ? "Weather system is not loaded yet. Load a save or enter a location." : "Погодная система еще не загружена. Загрузите сохранение или войдите в локацию.";
+        }
+        else if (Language == 0)
+        {
+            details = "Current: " + currentName + "  |  Precipitation: " + _weatherPrecipitationIntensity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+                + "  |  Rain: " + _weatherRainIntensity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+                + "  |  Snow: " + _weatherSnowIntensity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+                + (_weatherHeavyRain ? "  |  Heavy rain" : "");
+        }
+        else
+        {
+            details = "Текущая: " + currentName + "  |  Осадки: " + _weatherPrecipitationIntensity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+                + "  |  Дождь: " + _weatherRainIntensity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+                + "  |  Снег: " + _weatherSnowIntensity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+                + (_weatherHeavyRain ? "  |  Сильный дождь" : "");
+        }
+        UnityEngine.GUILayout.Label(details, _statusStyle);
+        UnityEngine.GUILayout.Label(L("Используются только штатные пресеты и переходы игры. Автоматический режим возвращает управление игре."), _footerStyle);
     }
 
     void DrawStatsTab()
