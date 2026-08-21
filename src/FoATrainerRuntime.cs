@@ -4325,7 +4325,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         string normalized = text.Trim().Replace(',', '.');
         if (normalized.Length == 0 || normalized == "+" || normalized == "-" || normalized == "." || normalized == "+." || normalized == "-.") return false;
         float parsed;
-        if (!float.TryParse(normalized, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out parsed)) return false;
+        try { parsed = System.Convert.ToSingle(normalized, System.Globalization.CultureInfo.InvariantCulture); }
+        catch { return false; }
         if (float.IsNaN(parsed) || float.IsInfinity(parsed)) return false;
         value = parsed;
         return true;
@@ -4392,13 +4393,14 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         UnityEngine.GUI.SetNextControlName(controlName);
         state.Text = UnityEngine.GUILayout.TextField(state.Text, _textFieldStyle, UnityEngine.GUILayout.Width(width), UnityEngine.GUILayout.Height(height));
 
-        int parsed;
-        if (int.TryParse(state.Text.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out parsed))
+        try
         {
+            int parsed = System.Convert.ToInt32(state.Text.Trim(), System.Globalization.CultureInfo.InvariantCulture);
             if (parsed < min) parsed = min;
             if (parsed > max) parsed = max;
             value = parsed;
         }
+        catch { }
 
         bool focusedAfter = UnityEngine.GUI.GetNameOfFocusedControl() == controlName;
         UnityEngine.Event current = UnityEngine.Event.current;
