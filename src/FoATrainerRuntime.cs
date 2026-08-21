@@ -3938,6 +3938,11 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         bool mr = ToggleFloat("Скорость расхода маны", ManaRateEnabled, ref ManaRate, "Num /", 0f, 100f, 0f, 5f); if (mr != ManaRateEnabled) SetManaRate(mr);
         bool sr = ToggleFloat("Скорость расхода выносливости", StaminaRateEnabled, ref StaminaRate, "Num *", 0f, 100f, 0f, 5f); if (sr != StaminaRateEnabled) SetStaminaRate(sr);
 
+        Section("Передвижение и физика");
+        bool ms = ToggleFloat("Скорость движения", MovementSpeedEnabled, ref MovementSpeed, "Alt+Num 6", 0.05f, 20f, 0.05f, 10f); if (ms != MovementSpeedEnabled) SetMovementSpeed(ms);
+        bool jh = ToggleFloat("Высота прыжка", JumpHeightEnabled, ref JumpHeight, "Alt+Num 7", 0.05f, 20f, 0.05f, 10f); if (jh != JumpHeightEnabled) SetJumpHeight(jh);
+        NoFallDamage = Toggle("Нет урона от падений", NoFallDamage, "Alt+Num 8");
+
         Section("Полет");
         bool fl = ToggleFloat("Полет / свободное перемещение", FlightEnabled, ref FlightSpeed, "F7", 0.1f, 200f, 0.1f, 60f); if (fl != FlightEnabled) SetFlight(fl);
         UnityEngine.GUILayout.BeginHorizontal(_rowStyle, UnityEngine.GUILayout.Height(36));
@@ -4108,11 +4113,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         InfiniteProfExp = Toggle("Бесконечный опыт мастерства", InfiniteProfExp, "Alt+Num 3");
         ProfExpMultiplierEnabled = ToggleFloat("Множитель опыта мастерства", ProfExpMultiplierEnabled, ref ProfExpMultiplier, "Alt+Num 4", 0f, 10000f, 0f, 100f);
 
-        Section("Скорость и время");
+        Section("Скорость игры и время");
         bool gs = ToggleFloat("Скорость игры", GameSpeedEnabled, ref GameSpeed, "Alt+Num 5", 0.05f, 20f, 0.05f, 5f); if (gs != GameSpeedEnabled) SetGameSpeed(gs);
-        bool ms = ToggleFloat("Скорость движения", MovementSpeedEnabled, ref MovementSpeed, "Alt+Num 6", 0.05f, 20f, 0.05f, 10f); if (ms != MovementSpeedEnabled) SetMovementSpeed(ms);
-        bool jh = ToggleFloat("Высота прыжка", JumpHeightEnabled, ref JumpHeight, "Alt+Num 7", 0.05f, 20f, 0.05f, 10f); if (jh != JumpHeightEnabled) SetJumpHeight(jh);
-        NoFallDamage = Toggle("Нет урона от падений", NoFallDamage, "Alt+Num 8");
         FreezeDaytime = Toggle("Заморозить время суток", FreezeDaytime, "Alt+Num 9");
         TimePassSpeedEnabled = ToggleFloat("Скорость течения времени", TimePassSpeedEnabled, ref TimePassSpeed, "Alt+Num 0", 0f, 100f, 0f, 10f);
     }
