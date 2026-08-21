@@ -64,6 +64,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     public static int EspFontSize = 13;
     public static int EspIconSize = 20;
     public static int EspHealthBarWidth = 52;
+    public static int EspHealthBarHeight = 3;
     public static int EspMaxObjects = 120;
 
     // V17.1: interface language, 0 = English, 1 = Russian. Public so profiles persist it.
@@ -1128,7 +1129,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                 text = text.Length > 0 ? text + "  [" + entry.StateText + "]" : entry.StateText;
 
             int iconSize = EspIconSize;
-            if (iconSize < 12) iconSize = 12;
+            if (iconSize < 6) iconSize = 6;
             if (iconSize > 42) iconSize = 42;
             bool drawIcon = EspShowIcons && !string.IsNullOrEmpty(entry.IconText);
             bool drawBar = EspShowHealthBars && !entry.IsDead && hpRatio >= 0f && (entry.Kind == 3 || entry.Kind == 4);
@@ -1143,7 +1144,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                 int oldSize = _espTextStyle.fontSize;
                 UnityEngine.TextAnchor oldAlign = _espTextStyle.alignment;
                 UnityEngine.Color oldColor = _espTextStyle.normal.textColor;
-                _espTextStyle.fontSize = iconSize > 18 ? iconSize - 8 : 10;
+                _espTextStyle.fontSize = iconSize > 18 ? iconSize - 8 : System.Math.Max(4, iconSize - 2);
                 _espTextStyle.alignment = UnityEngine.TextAnchor.MiddleCenter;
                 _espTextStyle.normal.textColor = entryColor;
                 UnityEngine.GUI.Label(badge, entry.IconText, _espTextStyle);
@@ -1156,12 +1157,14 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             UnityEngine.Rect labelRect = new UnityEngine.Rect(x, labelY, 0f, 0f);
             if (text.Length > 0)
             {
-                _espTextStyle.fontSize = EspFontSize < 9 ? 9 : (EspFontSize > 24 ? 24 : EspFontSize);
+                _espTextStyle.fontSize = EspFontSize < 5 ? 5 : (EspFontSize > 24 ? 24 : EspFontSize);
                 _espTextStyle.normal.textColor = entryColor;
                 UnityEngine.GUIContent gc = new UnityEngine.GUIContent(text);
                 UnityEngine.Vector2 size = _espTextStyle.CalcSize(gc);
-                float w = size.x + 12f;
-                float h = size.y + 8f;
+                float horizontalPadding = UnityEngine.Mathf.Max(4f, _espTextStyle.fontSize * 0.75f);
+                float verticalPadding = UnityEngine.Mathf.Max(2f, _espTextStyle.fontSize * 0.40f);
+                float w = size.x + horizontalPadding;
+                float h = size.y + verticalPadding;
                 labelRect = new UnityEngine.Rect(x - w * 0.5f, labelY, w, h);
                 if (EspShowBackground)
                     DrawEspRect(labelRect, new UnityEngine.Color(0.02f, 0.025f, 0.035f, 0.72f));
@@ -1172,9 +1175,12 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             if (drawBar)
             {
                 int barWidth = EspHealthBarWidth;
-                if (barWidth < 24) barWidth = 24;
+                if (barWidth < 8) barWidth = 8;
                 if (barWidth > 120) barWidth = 120;
-                UnityEngine.Rect barBg = new UnityEngine.Rect(x - barWidth * 0.5f, labelY, barWidth, 3f);
+                int barHeight = EspHealthBarHeight;
+                if (barHeight < 1) barHeight = 1;
+                if (barHeight > 8) barHeight = 8;
+                UnityEngine.Rect barBg = new UnityEngine.Rect(x - barWidth * 0.5f, labelY, barWidth, barHeight);
                 DrawEspRect(barBg, new UnityEngine.Color(0.12f, 0.12f, 0.12f, 0.88f));
                 UnityEngine.Color hpColor = hpRatio > 0.55f ? new UnityEngine.Color(0.25f, 0.90f, 0.35f, 0.95f) : (hpRatio > 0.25f ? new UnityEngine.Color(1.00f, 0.70f, 0.18f, 0.95f) : new UnityEngine.Color(1.00f, 0.24f, 0.20f, 0.95f));
                 DrawEspRect(new UnityEngine.Rect(barBg.x, barBg.y, barBg.width * hpRatio, barBg.height), hpColor);
@@ -1598,6 +1604,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         d["HP врагов / NPC"] = "Enemy / NPC HP";
         d["Полоски HP"] = "HP bars";
         d["Ширина полоски HP"] = "HP bar width";
+        d["Высота полоски HP"] = "HP bar height";
         d["Статус контейнеров / трупов"] = "Container / corpse status";
         d["Скрывать пустые контейнеры / трупы"] = "Hide empty containers / corpses";
         d["Иконки ESP"] = "ESP icon badges";
@@ -4050,12 +4057,13 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         EspShowDistance = Toggle("Расстояние", EspShowDistance, "");
         EspShowHealth = Toggle("HP врагов / NPC", EspShowHealth, "");
         EspShowHealthBars = Toggle("Полоски HP", EspShowHealthBars, "");
-        SettingInt("Ширина полоски HP", ref EspHealthBarWidth, 24, 120);
+        SettingInt("Ширина полоски HP", ref EspHealthBarWidth, 8, 120);
+        SettingInt("Высота полоски HP", ref EspHealthBarHeight, 1, 8);
         EspShowIcons = Toggle("Иконки ESP", EspShowIcons, "");
         EspIconsOnly = Toggle("Только иконки (без названий)", EspIconsOnly, "");
-        SettingInt("Размер иконок ESP", ref EspIconSize, 12, 42);
+        SettingInt("Размер иконок ESP", ref EspIconSize, 6, 42);
         EspShowBackground = Toggle("Темный фон подписи", EspShowBackground, "");
-        SettingInt("Размер текста ESP", ref EspFontSize, 9, 24);
+        SettingInt("Размер текста ESP", ref EspFontSize, 5, 24);
         SettingInt("Максимум подписей на экране", ref EspMaxObjects, 10, 500);
         SettingFloat("Интервал сканирования", ref EspScanInterval, 0.50f, 3.0f, "sec");
 
