@@ -9,7 +9,7 @@ Telegram: [@Captain_S1ow](https://t.me/Captain_S1ow)
 English | [Русский](README_RU.md)
 
 [![Latest Release](https://img.shields.io/github/v/release/Fenrisu1ven/FoA_Trainer?display_name=tag&sort=semver&label=Latest%20Release)](https://github.com/Fenrisu1ven/FoA_Trainer/releases/latest)
-[![Download FoATrainer_V18_4.dll](https://img.shields.io/badge/Download-FoATrainer__V18__4.dll-2ea44f?logo=github)](https://github.com/Fenrisu1ven/FoA_Trainer/releases/download/v2.6.4/FoATrainer_V18_4.dll)
+[![Download FoATrainer_V19.dll](https://img.shields.io/badge/Download-FoATrainer__V19.dll-2ea44f?logo=github)](https://github.com/Fenrisu1ven/FoA_Trainer/releases/download/v2.7.0/FoATrainer_V19.dll)
 ![Game: Tainted Grail](https://img.shields.io/badge/Game-Tainted%20Grail-9b7331)
 [![BepInEx 5](https://img.shields.io/badge/BepInEx-5-5b6ee1)](https://github.com/BepInEx/BepInEx/releases)
 ![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078d4)
@@ -17,14 +17,14 @@ English | [Русский](README_RU.md)
 ![UI: English / Russian](https://img.shields.io/badge/UI-English%20%2F%20Russian-d6a957)
 ![ESP: Configurable](https://img.shields.io/badge/ESP-Configurable-cf4f41)
 
-**Current stable build: V18.4 / 2.6.4**
+**Current stable build: V19 / 2.7.0**
 
-FoA Trainer is an in-game BepInEx trainer for **Tainted Grail: The Fall of Avalon**. It combines gameplay modifiers, character and inventory editing, profiles, Flight / NoClip, an advanced searchable Item Spawner, and a configurable ESP overlay in one bilingual EN/RU interface.
+FoA Trainer is an in-game BepInEx trainer for **Tainted Grail: The Fall of Avalon**. It combines gameplay modifiers, character and inventory editing, profiles, Flight / NoClip, native weather control, an advanced searchable Item Spawner, and a configurable ESP overlay in one bilingual EN/RU interface.
 
 [Features](#features) • [Configurable ESP](#configurable-esp) • [Installation](#installation) • [Controls](#controls) • [Item Spawner](#item-spawner) • [Profiles](#profiles) • [Screenshots](#screenshots) • [Building](#building-from-source) • [Diagnostics](#diagnostics) • [Changelog](#changelog) • [Disclaimer](#disclaimer)
 
 > [!NOTE]
-> V18.4 is the current stability build. It is based directly on the confirmed-working V18.3 runtime and retains the conservative architecture required by the game's Mono.CSharp environment. Compatibility with every game release is not guaranteed.
+> V19 extends the confirmed-working V18.4 stability runtime. It retains the conservative architecture required by the game's Mono.CSharp environment and adds native weather presets without replacing the game's weather simulation. Compatibility with every game release is not guaranteed.
 
 ## Features
 
@@ -52,7 +52,19 @@ FoA Trainer is an in-game BepInEx trainer for **Tainted Grail: The Fall of Avalo
 - XP and proficiency/mastery controls and multipliers
 - Level, attribute-point, and skill-point editors
 - Editors for primary attributes and proficiency/mastery values
-- Game speed, movement speed, frozen daytime, and daytime-speed controls
+- Game speed, frozen daytime, and daytime-speed controls
+- Native weather preset selection with automatic/default and forced modes
+- Live native precipitation, rain, snow, and heavy-rain status
+
+### Native Weather
+
+- Reads the real preset list from the game's `WeatherController`; no invented weather types
+- Applies presets through the game's official `SetPreset(int)` method
+- Forced mode safely re-applies the selected preset after location, load, or day changes
+- Automatic/default mode stops forcing and returns scheduling to the game
+- Keeps native intensity curves, variations, and transitions intact
+- Stores weather mode and selection separately in BepInEx Config, leaving existing trainer profiles unchanged
+- Does not expose an artificial transition-speed control because the game provides no supported API for one
 
 ### Profiles / Interface
 
@@ -66,7 +78,7 @@ FoA Trainer is an in-game BepInEx trainer for **Tainted Grail: The Fall of Avalo
 
 ## Configurable ESP
 
-ESP is a major V18.4 feature and continues to render when the trainer menu is hidden.
+ESP remains a major V19 feature and continues to render when the trainer menu is hidden.
 
 - `F6` master ESP toggle
 - Separate item, searchable-container/corpse, enemy, and NPC groups
@@ -85,7 +97,7 @@ ESP is a major V18.4 feature and continues to render when the trainer menu is hi
 
 ### Performance and stability design
 
-V18.4 keeps the performance-safe scanner from the stable V18.3 line:
+V19 keeps the performance-safe scanner from the stable V18.4 line:
 
 - Targeted `World.All<T>()` scans replace the old full-world `Location` scan.
 - `PickItemAction` is used for dropped/pickable items.
@@ -109,7 +121,7 @@ V18.4 keeps the performance-safe scanner from the stable V18.3 line:
 
 1. Install [BepInEx 5](https://github.com/BepInEx/BepInEx/releases) for the Mono version of the game.
 2. Start the game once so BepInEx creates its folders.
-3. Download `FoATrainer_V18_4.dll` from the [latest GitHub Release](https://github.com/Fenrisu1ven/FoA_Trainer/releases/latest).
+3. Download `FoATrainer_V19.dll` from the [latest GitHub Release](https://github.com/Fenrisu1ven/FoA_Trainer/releases/latest).
 4. Copy the DLL to:
 
    ```text
@@ -159,17 +171,25 @@ BepInEx/config/FoATrainer_Profiles/
 
 A profile stores toggles, multipliers, editor values, flight settings, ESP settings, and interface language. Saving with an existing profile name updates it. The last saved profile is selected and reapplied automatically after the character is initialized on the next game start.
 
+Weather settings are intentionally stored in the V19 BepInEx configuration (`BepInEx/config/rijiy.foa.trainer.v19.cfg`) rather than in profiles. Existing V18.4 profiles remain compatible and do not overwrite forced/automatic weather state.
+
 ## Screenshots
+
+### Native Weather — V19
+
+![FoA Trainer V19 native weather controls](screenshots/weather-ru-v19.png)
+
+The V19 panel reads the game's real weather presets and native precipitation intensity in real time. The screenshot shows the forced `Short rain with variation` preset while the game's own heavy-rain state is active.
 
 ### Settings & Diagnostics — English
 
-![FoA Trainer V18.4 settings and diagnostics in English](screenshots/settings-en.png)
+![FoA Trainer settings and diagnostics in English](screenshots/settings-en.png)
 
 ### Settings & Diagnostics — Russian
 
-![FoA Trainer V18.4 settings and diagnostics in Russian](screenshots/settings-ru.png)
+![FoA Trainer settings and diagnostics in Russian](screenshots/settings-ru.png)
 
-Both screenshots show the current V18.4 / 2.6.4 interface with the ESP tab available. A real in-game ESP-overlay screenshot can be added later when one is available.
+The screenshots show the bilingual trainer interface. V19 adds the native weather block to the **XP / TIME** tab while movement speed, jump height, and fall-damage protection are grouped in **PLAYER**.
 
 ## Building from source
 
@@ -182,21 +202,23 @@ python tools/build.py
 Output:
 
 ```text
-dist/FoATrainer_V18_4.dll
+dist/FoATrainer_V19.dll
 ```
 
 This project intentionally uses a bootstrap + runtime-compilation architecture instead of a conventional modern .NET SDK project. The generated BepInEx bootstrap embeds `FoATrainerRuntime.cs`; at game startup it compiles the runtime against the already loaded game/framework assemblies using the Mono.CSharp evaluator available in the game environment.
 
-`tools/build.py` creates a new module GUID during each build, so functionally equivalent builds can have different hashes. The prebuilt DLL in `dist/` is the confirmed in-game V18.4 binary supplied with this source package.
+`tools/build.py` creates a new module GUID during each build, so functionally equivalent builds can have different hashes. The current V19 build is emitted alongside the preserved V18.4 binary in `dist/`.
 
 ### Source layout
 
 - `src/FoATrainerRuntime.cs` — complete runtime, UI, ESP, and game logic
 - `src/Bootstrap.reference.cs` — readable C# equivalent of the generated bootstrap
-- `tools/build.py` — standalone bootstrap/DLL generator for V18.4
-- `dist/FoATrainer_V18_4.dll` — confirmed in-game V18.4 binary
+- `tools/build.py` — standalone bootstrap/DLL generator for V19
+- `dist/FoATrainer_V19.dll` — current V19 binary
+- `dist/FoATrainer_V18_4.dll` — preserved previous stable binary
 - `assets/foa-trainer-banner.png` — FoA Trainer repository banner
-- `screenshots/settings-en.png` and `screenshots/settings-ru.png` — current V18.4 interface screenshots
+- `screenshots/weather-ru-v19.png` — V19 native weather controls in game
+- `screenshots/settings-en.png` and `screenshots/settings-ru.png` — bilingual settings/diagnostics screenshots
 
 The repository does not include game assemblies, BepInEx binaries, Harmony binaries, or other proprietary game files.
 
@@ -208,7 +230,7 @@ Logs used for startup and compilation diagnostics:
 - `BepInEx/FoATrainer_compile.log`
 - `BepInEx/LogOutput.log`
 
-The supplied in-game V18.4 verification reports `Runtime started. Patches: 13, missing: 0`, successful startup-profile application, and no compile errors. Known output is limited to duplicate predefined-type warnings and the unused `_texEspBg` warning.
+V19 retains the expected diagnostic result `Runtime started. Patches: 13, missing: 0`. Weather support uses the native controller and does not require an additional Harmony patch.
 
 ## Changelog
 

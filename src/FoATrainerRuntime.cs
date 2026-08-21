@@ -4126,7 +4126,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         UnityEngine.GUILayout.BeginHorizontal(UnityEngine.GUILayout.Height(38));
         UnityEngine.GUILayout.BeginVertical(UnityEngine.GUILayout.Width(330));
         UnityEngine.GUILayout.Label("TAINTED GRAIL - TRAINER", _titleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(22));
-        UnityEngine.GUILayout.Label("BepInEx v5 Mono  |  EN / RU  |  v2.6.4", _subtitleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(15));
+        UnityEngine.GUILayout.Label("BepInEx v5 Mono  |  EN / RU  |  v2.7.0", _subtitleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(15));
         UnityEngine.GUILayout.EndVertical();
         UnityEngine.GUILayout.FlexibleSpace();
         UnityEngine.GUILayout.Label(L("Активно: ") + ActiveCheatCount(), _hotkeyStyle, UnityEngine.GUILayout.Width(88), UnityEngine.GUILayout.Height(28));

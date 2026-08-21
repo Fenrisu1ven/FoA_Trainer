@@ -2,6 +2,19 @@
 
 All notable public changes to FoA Trainer are documented in this file.
 
+## [2.7.0] - V19
+
+- Added native weather control to the **XP / TIME** tab using the game's `Awaken.TG.Graphics.WeatherController`.
+- Read the real in-game precipitation preset names at runtime instead of maintaining an invented weather list.
+- Added automatic/default mode and a forced-preset mode that safely holds the selected preset across location, load, and day changes.
+- Kept the game's native intensity curves, daily scheduling, variation, rain/snow values, and transitions active.
+- Added live current-preset, precipitation, rain, snow, and heavy-rain status to the trainer UI.
+- Stored the forced-weather state and selected preset in the new V19 BepInEx Config; existing trainer profiles and V18.4 configuration remain unchanged.
+- Deliberately omitted a transition-speed control because the game exposes no supported native API for it.
+- Moved movement speed, jump height, and no-fall-damage controls from **XP / TIME** to a dedicated **Movement and physics** section in **PLAYER**, preserving values, ranges, hotkeys, and profile compatibility.
+- Updated plugin identity, bootstrap diagnostics, documentation, and release artifact to `FoATrainer_V19.dll` / `2.7.0`.
+- Retained the V18.4 Mono.CSharp startup fix and all 13 existing Harmony patches.
+
 ## [2.6.4] - V18.4
 
 - Added synchronized sliders alongside exact numeric inputs for all gameplay multipliers, rates, flight values, and ESP numeric settings.
@@ -122,6 +135,7 @@ All notable public changes to FoA Trainer are documented in this file.
 - Added Flight / NoClip.
 - Added the Item Spawner and item-stat preview.
 
+[2.7.0]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.7.0
 [2.6.4]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.6.4
 [2.5.1]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.5.1
 [2.5.0]: https://github.com/Fenrisu1ven/FoA_Trainer/compare/v2.4.0...v2.5.0
