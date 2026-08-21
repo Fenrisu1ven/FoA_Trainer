@@ -40,6 +40,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     public static bool EspContainers = true;
     public static bool EspEnemies = true;
     public static bool EspNpcs = false;
+    public static bool EspFriendlies = true;
+    public static bool EspMerchants = true;
     public static bool EspShowItemWeapons = true;
     public static bool EspShowItemArmor = true;
     public static bool EspShowItemConsumables = true;
@@ -171,6 +173,16 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
 
     // V18.2: optimized ESP cache. ModelsSet is converted through GetManagedEnumerator; reflection accessors are cached.
     // OnGUI uses cached coordinates/anchors and draws only during Repaint.
+    enum EspEntityType
+    {
+        Item = 1,
+        Container = 2,
+        Hostile = 3,
+        Neutral = 4,
+        Friendly = 5,
+        Merchant = 6
+    }
+
     class EspEntry
     {
         public object Source;
@@ -178,7 +190,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         public UnityEngine.Transform Anchor;
         public UnityEngine.Vector3 Position;
         public UnityEngine.Vector3 AnchorOffset;
-        public int Kind; // 1 item, 2 container, 3 enemy, 4 npc
+        public EspEntityType Kind;
         public string Name;
         public float Distance;
         public string HealthText;
@@ -194,6 +206,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static System.Collections.Generic.Dictionary<string, System.Reflection.MemberInfo> _espMemberCache = new System.Collections.Generic.Dictionary<string, System.Reflection.MemberInfo>();
     static System.Collections.Generic.Dictionary<string, bool> _espMissingMemberCache = new System.Collections.Generic.Dictionary<string, bool>();
     static System.Collections.Generic.Dictionary<string, int> _espNpcLocationState = new System.Collections.Generic.Dictionary<string, int>();
+    static System.Collections.Generic.HashSet<object> _espMerchantLocations = new System.Collections.Generic.HashSet<object>();
+    static System.Collections.Generic.HashSet<string> _espMerchantLocationIds = new System.Collections.Generic.HashSet<string>();
     static System.Reflection.FieldInfo _espPickItemDataField;
     static float _espNextScan;
     static int _espVisibleLastFrame;
@@ -201,6 +215,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static int _espContainersCached;
     static int _espEnemiesCached;
     static int _espNpcsCached;
+    static int _espFriendliesCached;
+    static int _espMerchantsCached;
     static int _espCorpsesCached;
     static int _espItemsRaw;
     static int _espContainersRaw;
@@ -690,7 +706,22 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         return false;
     }
 
-    static bool TryEspPosition(object obj, int kind, out UnityEngine.Vector3 position, out UnityEngine.Transform anchor, out UnityEngine.Vector3 anchorOffset)
+    static bool EspIsNpcType(EspEntityType kind)
+    {
+        return kind == EspEntityType.Hostile || kind == EspEntityType.Neutral || kind == EspEntityType.Friendly || kind == EspEntityType.Merchant;
+    }
+
+    static bool EspCategoryEnabled(EspEntityType kind)
+    {
+        if (kind == EspEntityType.Hostile) return EspEnemies;
+        if (kind == EspEntityType.Friendly) return EspFriendlies;
+        if (kind == EspEntityType.Merchant) return EspMerchants;
+        if (kind == EspEntityType.Neutral) return EspNpcs;
+        if (kind == EspEntityType.Item) return EspItems;
+        return EspContainers;
+    }
+
+    static bool TryEspPosition(object obj, EspEntityType kind, out UnityEngine.Vector3 position, out UnityEngine.Transform anchor, out UnityEngine.Vector3 anchorOffset)
     {
         position = UnityEngine.Vector3.zero;
         anchor = null;
@@ -698,7 +729,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         if (obj == null) return false;
         try
         {
-            if (kind == 3 || kind == 4)
+            if (EspIsNpcType(kind))
             {
                 object head = GetEspProp(obj, "Head");
                 UnityEngine.Transform headTransform = head as UnityEngine.Transform;
@@ -713,7 +744,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             object coords = GetEspProp(obj, "Coords");
             if (TryVector3(coords, out position))
             {
-                if (kind == 3 || kind == 4) position.y += 1.75f;
+                if (EspIsNpcType(kind)) position.y += 1.75f;
                 else position.y += 0.30f;
                 return true;
             }
@@ -775,6 +806,48 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         catch { return ""; }
     }
 
+    static bool EspLocationIsMerchant(object location)
+    {
+        if (location == null) return false;
+        if (_espMerchantLocations.Contains(location)) return true;
+        string id = EspObjectId(location);
+        return !string.IsNullOrEmpty(id) && _espMerchantLocationIds.Contains(id);
+    }
+
+    static EspEntityType EspClassifyNpc(object npc)
+    {
+        if (npc == null) return EspEntityType.Neutral;
+
+        // A Shop is a dedicated game model attached to the same Location as its merchant NPC.
+        // Merchant takes priority over the NPC's combat-capable base class.
+        object location = GetEspProp(npc, "ParentModel");
+        if (EspLocationIsMerchant(location)) return EspEntityType.Merchant;
+
+        // NpcElement.AntagonismToHero is the runtime faction result used by the game:
+        // Friendly = 0, Neutral = 1, Hostile = 2.
+        object antagonism = GetEspProp(npc, "AntagonismToHero");
+        if (antagonism != null)
+        {
+            int relation = ToInt(antagonism, -1);
+            if (relation == 0) return EspEntityType.Friendly;
+            if (relation == 1) return EspEntityType.Neutral;
+            if (relation == 2) return EspEntityType.Hostile;
+        }
+
+        // Compatibility fallbacks for game versions where the relation property cannot be read.
+        if (ToBool(GetEspProp(npc, "IsSummonOrAlly"))) return EspEntityType.Friendly;
+        if (GetEspProp(npc, "EnemyBaseClass") != null) return EspEntityType.Hostile;
+        return EspEntityType.Neutral;
+    }
+
+    static string EspNpcFallbackName(EspEntityType kind)
+    {
+        if (kind == EspEntityType.Merchant) return Language == 1 ? "Торговец" : "Merchant";
+        if (kind == EspEntityType.Friendly) return Language == 1 ? "Союзник" : "Friendly";
+        if (kind == EspEntityType.Hostile) return Language == 1 ? "Враг" : "Enemy";
+        return Language == 1 ? "Нейтральный NPC" : "Neutral NPC";
+    }
+
     static string EspItemIcon(object template)
     {
         if (template == null) return "I";
@@ -799,7 +872,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         catch { return false; }
     }
 
-    static bool EspWithinDistance(object source, int kind, UnityEngine.Vector3 heroPos, float maxDistance)
+    static bool EspWithinDistance(object source, EspEntityType kind, UnityEngine.Vector3 heroPos, float maxDistance)
     {
         if (source == null) return false;
         UnityEngine.Vector3 pos;
@@ -824,7 +897,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         return System.Math.Round(current).ToString(System.Globalization.CultureInfo.InvariantCulture) + "/" + System.Math.Round(max).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    static void AddEspEntry(object source, object template, int kind, string fallback, UnityEngine.Vector3 heroPos, float maxDistance)
+    static void AddEspEntry(object source, object template, EspEntityType kind, string fallback, UnityEngine.Vector3 heroPos, float maxDistance)
     {
         if (source == null || IsDiscarded(source)) return;
         UnityEngine.Vector3 pos;
@@ -847,30 +920,33 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         entry.StateText = "";
         entry.IsDead = false;
         entry.IsEmpty = false;
-        if (kind == 1) entry.IconText = EspItemIcon(template);
-        else if (kind == 2) entry.IconText = "C";
-        else if (kind == 3) entry.IconText = "X";
+        if (kind == EspEntityType.Item) entry.IconText = EspItemIcon(template);
+        else if (kind == EspEntityType.Container) entry.IconText = "C";
+        else if (kind == EspEntityType.Hostile) entry.IconText = "!";
+        else if (kind == EspEntityType.Friendly) entry.IconText = "+";
+        else if (kind == EspEntityType.Merchant) entry.IconText = "$";
         else entry.IconText = "N";
-        if ((EspShowHealth || EspShowHealthBars) && (kind == 3 || kind == 4))
+        if ((EspShowHealth || EspShowHealthBars) && EspIsNpcType(kind))
             entry.HealthText = EspHealthText(source, out entry.HealthRatio);
         _espEntries.Add(entry);
-        if (kind == 1) _espItemsCached++;
-        else if (kind == 2) _espContainersCached++;
-        else if (kind == 3) _espEnemiesCached++;
-        else if (kind == 4) _espNpcsCached++;
+        if (kind == EspEntityType.Item) _espItemsCached++;
+        else if (kind == EspEntityType.Container) _espContainersCached++;
+        else if (kind == EspEntityType.Hostile) _espEnemiesCached++;
+        else if (kind == EspEntityType.Neutral) _espNpcsCached++;
+        else if (kind == EspEntityType.Friendly) _espFriendliesCached++;
+        else if (kind == EspEntityType.Merchant) _espMerchantsCached++;
     }
 
     static void AddEspLootEntry(object searchAction, object location, int npcState, UnityEngine.Vector3 heroPos)
     {
         if (searchAction == null || location == null || IsDiscarded(location)) return;
-        bool corpse = npcState == 3 || npcState == 4;
+        bool corpse = npcState < 0;
+        EspEntityType kind = corpse ? (EspEntityType)(-npcState) : EspEntityType.Container;
         if (corpse && !EspShowDead) return;
-        if (corpse && npcState == 3 && !EspEnemies) return;
-        if (corpse && npcState == 4 && !EspNpcs) return;
+        if (corpse && !EspCategoryEnabled(kind)) return;
         if (!corpse && !EspContainers) return;
 
-        int kind = corpse ? (npcState == 3 ? 3 : 4) : 2;
-        float maxDistance = corpse ? (npcState == 3 ? EspEnemyDistance : EspNpcDistance) : EspContainerDistance;
+        float maxDistance = corpse ? (kind == EspEntityType.Hostile ? EspEnemyDistance : EspNpcDistance) : EspContainerDistance;
         if (!EspWithinDistance(location, kind, heroPos, maxDistance)) return;
 
         bool empty = false;
@@ -886,6 +962,37 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         entry.IconText = corpse ? "X" : "C";
         if (EspShowLootState) entry.StateText = empty ? (Language == 1 ? "ПУСТО" : "EMPTY") : (Language == 1 ? "ЛУТ" : "LOOT");
         if (corpse) _espCorpsesCached++;
+    }
+
+    static void ScanEspMerchantLocations(System.Collections.IEnumerable enumerable)
+    {
+        if (enumerable == null) return;
+        System.IDisposable disposable = enumerable as System.IDisposable;
+        try
+        {
+            System.Collections.IEnumerator it = enumerable.GetEnumerator();
+            while (it.MoveNext())
+            {
+                object shop = it.Current;
+                if (shop == null || IsDiscarded(shop)) continue;
+                object location = GetEspProp(shop, "ParentModel");
+                if (location == null) continue;
+                _espMerchantLocations.Add(location);
+                string id = EspObjectId(location);
+                if (!string.IsNullOrEmpty(id)) _espMerchantLocationIds.Add(id);
+            }
+        }
+        catch (System.Exception ex)
+        {
+            _espStatus = "ESP merchant scan error: " + ex.Message;
+        }
+        finally
+        {
+            if (disposable != null)
+            {
+                try { disposable.Dispose(); } catch { }
+            }
+        }
     }
 
     static void ScanEspEnumerable(System.Collections.IEnumerable enumerable, int mode, UnityEngine.Vector3 heroPos)
@@ -915,7 +1022,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                     catch { }
                     object template = GetEspProp(spawningData, "ItemTemplate");
                     if (!EspItemTemplateAllowed(template)) continue;
-                    AddEspEntry(location, template, 1, Language == 1 ? "Предмет" : "Item", heroPos, EspItemDistance);
+                    AddEspEntry(location, template, EspEntityType.Item, Language == 1 ? "Предмет" : "Item", heroPos, EspItemDistance);
                 }
                 else if (mode == 2)
                 {
@@ -928,23 +1035,22 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                     int npcState = 0;
                     if (!string.IsNullOrEmpty(id)) _espNpcLocationState.TryGetValue(id, out npcState);
                     // SearchAction on an NPC is a corpse interaction. Living NPC search actions are skipped.
-                    if (npcState == 1 || npcState == 2) continue;
+                    if (npcState > 0) continue;
                     AddEspLootEntry(obj, location, npcState, heroPos);
                 }
                 else if (mode == 3)
                 {
                     if (ToBool(GetEspProp(obj, "IsDisappeared"))) continue;
                     bool alive = ToBool(GetEspProp(obj, "IsAlive"));
-                    bool enemy = GetEspProp(obj, "EnemyBaseClass") != null;
+                    EspEntityType category = EspClassifyNpc(obj);
                     object location = GetEspProp(obj, "ParentModel");
                     string id = EspObjectId(location);
-                    if (!string.IsNullOrEmpty(id)) _espNpcLocationState[id] = alive ? (enemy ? 1 : 2) : (enemy ? 3 : 4);
+                    if (!string.IsNullOrEmpty(id)) _espNpcLocationState[id] = alive ? (int)category : -(int)category;
                     // Dead NPCs are drawn only from their SearchAction, so they cannot be duplicated as living NPCs.
                     if (!alive) continue;
-                    if (enemy && EspEnemies)
-                        AddEspEntry(obj, null, 3, Language == 1 ? "Враг" : "Enemy", heroPos, EspEnemyDistance);
-                    else if (!enemy && EspNpcs)
-                        AddEspEntry(obj, null, 4, "NPC", heroPos, EspNpcDistance);
+                    if (!EspCategoryEnabled(category)) continue;
+                    float maxDistance = category == EspEntityType.Hostile ? EspEnemyDistance : EspNpcDistance;
+                    AddEspEntry(obj, null, category, EspNpcFallbackName(category), heroPos, maxDistance);
                 }
             }
         }
@@ -972,23 +1078,33 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         if (!TryVector3(GetEspProp(hero, "Coords"), out heroPos)) return;
         _espEntries.Clear();
         _espNpcLocationState.Clear();
+        _espMerchantLocations.Clear();
+        _espMerchantLocationIds.Clear();
         _espItemsCached = 0;
         _espContainersCached = 0;
         _espEnemiesCached = 0;
         _espNpcsCached = 0;
+        _espFriendliesCached = 0;
+        _espMerchantsCached = 0;
         _espCorpsesCached = 0;
         _espItemsRaw = 0;
         _espContainersRaw = 0;
         _espNpcsRaw = 0;
-        // NPC pass first builds a cheap Location ID state map used by SearchAction corpse detection.
-        if (EspEnemies || EspNpcs || EspContainers || EspShowDead) ScanEspEnumerable(WorldAll("Awaken.TG.Main.Fights.NPCs.NpcElement"), 3, heroPos);
+        // Shop pass builds the merchant Location set. NPC pass then uses it before faction classification.
+        if (EspMerchants || EspEnemies || EspFriendlies || EspNpcs || EspShowDead)
+            ScanEspMerchantLocations(WorldAll("Awaken.TG.Main.Locations.Shops.Shop"));
+        // NPC pass builds a Location ID state map used by SearchAction corpse detection.
+        if (EspEnemies || EspFriendlies || EspMerchants || EspNpcs || EspContainers || EspShowDead)
+            ScanEspEnumerable(WorldAll("Awaken.TG.Main.Fights.NPCs.NpcElement"), 3, heroPos);
         if (EspItems) ScanEspEnumerable(WorldAll("Awaken.TG.Main.Locations.Actions.PickItemAction"), 1, heroPos);
-        if (EspContainers || (EspShowDead && (EspEnemies || EspNpcs))) ScanEspEnumerable(WorldAll("Awaken.TG.Main.Locations.Actions.SearchAction"), 2, heroPos);
+        if (EspContainers || (EspShowDead && (EspEnemies || EspFriendlies || EspMerchants || EspNpcs)))
+            ScanEspEnumerable(WorldAll("Awaken.TG.Main.Locations.Actions.SearchAction"), 2, heroPos);
         _espEntries.Sort(delegate(EspEntry a, EspEntry b) { return a.Distance.CompareTo(b.Distance); });
         _espStatus = (Language == 1 ? "Кеш: " : "Cache: ") + _espEntries.Count +
             " | I " + _espItemsCached + "/" + _espItemsRaw +
             " C " + _espContainersCached + "/" + _espContainersRaw +
-            " E " + _espEnemiesCached + " N " + _espNpcsCached + " D " + _espCorpsesCached + "/" + _espNpcsRaw;
+            " H " + _espEnemiesCached + " F " + _espFriendliesCached + " N " + _espNpcsCached + " M " + _espMerchantsCached +
+            " D " + _espCorpsesCached + "/" + _espNpcsRaw;
     }
 
     static UnityEngine.Vector3 EspEntryPosition(EspEntry entry)
@@ -1038,12 +1154,14 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         return _espCamera;
     }
 
-    static UnityEngine.Color EspColorForKind(int kind)
+    static UnityEngine.Color EspColorForKind(EspEntityType kind)
     {
-        if (kind == 1) return new UnityEngine.Color(0.35f, 0.86f, 1.00f, 1f);
-        if (kind == 2) return new UnityEngine.Color(1.00f, 0.72f, 0.23f, 1f);
-        if (kind == 3) return new UnityEngine.Color(1.00f, 0.30f, 0.27f, 1f);
-        return new UnityEngine.Color(0.42f, 0.95f, 0.55f, 1f);
+        if (kind == EspEntityType.Item) return new UnityEngine.Color(0.35f, 0.86f, 1.00f, 1f);
+        if (kind == EspEntityType.Container) return new UnityEngine.Color(1.00f, 0.72f, 0.23f, 1f);
+        if (kind == EspEntityType.Hostile) return new UnityEngine.Color(1.00f, 0.30f, 0.27f, 1f);
+        if (kind == EspEntityType.Friendly) return new UnityEngine.Color(0.35f, 0.95f, 0.50f, 1f);
+        if (kind == EspEntityType.Merchant) return new UnityEngine.Color(0.78f, 0.55f, 1.00f, 1f);
+        return new UnityEngine.Color(1.00f, 0.86f, 0.35f, 1f);
     }
 
     static UnityEngine.Color EspColorForEntry(EspEntry entry)
@@ -1059,11 +1177,11 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         return UnityEngine.Vector3.Distance(heroPos, worldPos);
     }
 
-    static float EspMaxDistanceForKind(int kind)
+    static float EspMaxDistanceForKind(EspEntityType kind)
     {
-        if (kind == 1) return EspItemDistance;
-        if (kind == 2) return EspContainerDistance;
-        if (kind == 3) return EspEnemyDistance;
+        if (kind == EspEntityType.Item) return EspItemDistance;
+        if (kind == EspEntityType.Container) return EspContainerDistance;
+        if (kind == EspEntityType.Hostile) return EspEnemyDistance;
         return EspNpcDistance;
     }
 
@@ -1123,7 +1241,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                 text = text.Length > 0 ? text + "  [" + dist + "]" : dist;
             }
             float hpRatio = entry.HealthRatio;
-            if (EspShowHealth && (entry.Kind == 3 || entry.Kind == 4) && !entry.IsDead && !string.IsNullOrEmpty(entry.HealthText))
+            if (EspShowHealth && EspIsNpcType(entry.Kind) && !entry.IsDead && !string.IsNullOrEmpty(entry.HealthText))
                 text = text.Length > 0 ? text + "  HP " + entry.HealthText : "HP " + entry.HealthText;
             if (EspShowLootState && !string.IsNullOrEmpty(entry.StateText))
                 text = text.Length > 0 ? text + "  [" + entry.StateText + "]" : entry.StateText;
@@ -1132,7 +1250,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             if (iconSize < 6) iconSize = 6;
             if (iconSize > 42) iconSize = 42;
             bool drawIcon = EspShowIcons && !string.IsNullOrEmpty(entry.IconText);
-            bool drawBar = EspShowHealthBars && !entry.IsDead && hpRatio >= 0f && (entry.Kind == 3 || entry.Kind == 4);
+            bool drawBar = EspShowHealthBars && !entry.IsDead && hpRatio >= 0f && EspIsNpcType(entry.Kind);
             if (!drawIcon && text.Length == 0 && !drawBar) continue;
 
             UnityEngine.Color entryColor = EspColorForEntry(entry);
@@ -1585,6 +1703,10 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         d["Контейнеры"] = "Containers";
         d["Враги"] = "Enemies";
         d["NPC"] = "NPC";
+        d["Враждебные NPC / враги"] = "Hostile NPCs / enemies";
+        d["Дружественные NPC / союзники"] = "Friendly NPCs / allies";
+        d["Нейтральные NPC"] = "Neutral NPCs";
+        d["Торговцы"] = "Merchants";
         d["Показывать мертвых NPC / врагов"] = "Show dead NPCs / enemies";
         d["Фильтр предметов ESP"] = "ESP item filter";
         d["Оружие"] = "Weapons";
@@ -1598,10 +1720,12 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         d["Контейнеры - дальность"] = "Containers distance";
         d["Враги - дальность"] = "Enemies distance";
         d["NPC - дальность"] = "NPC distance";
+        d["NPC / союзники / торговцы - дальность"] = "NPC / ally / merchant distance";
         d["Отображение ESP"] = "ESP display";
         d["Название"] = "Name";
         d["Расстояние"] = "Distance";
         d["HP врагов / NPC"] = "Enemy / NPC HP";
+        d["HP существ / NPC"] = "Creature / NPC HP";
         d["Полоски HP"] = "HP bars";
         d["Ширина полоски HP"] = "HP bar width";
         d["Высота полоски HP"] = "HP bar height";
@@ -1616,6 +1740,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         d["Интервал сканирования"] = "Scan interval";
         d["Статус ESP"] = "ESP status";
         d["Цвета: предметы - голубой, контейнеры - оранжевый, враги - красный, NPC - зеленый, трупы / пустые - серый."] = "Colors: items - cyan, containers - orange, enemies - red, NPCs - green, corpses / empty - gray.";
+        d["Цвета: враги - красный, союзники - зеленый, нейтральные - желтый, торговцы - фиолетовый."] = "Colors: hostiles - red, friendlies - green, neutral - yellow, merchants - purple.";
         d["ПЕРЕСКАНИРОВАТЬ ESP"] = "RESCAN ESP";
         d["ESP готов"] = "ESP ready";
         d["ESP включен"] = "ESP enabled";
@@ -2139,6 +2264,28 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             }
 
             DisableAllFunctions();
+            // Backward-compatible defaults for profiles created before the new ESP categories.
+            // Friendly NPCs previously followed the generic NPC toggle; merchants were usually
+            // included in enemies because EnemyBaseClass was the old classifier.
+            string legacyValue;
+            if (!values.ContainsKey("EspFriendlies"))
+            {
+                if (values.TryGetValue("EspNpcs", out legacyValue))
+                {
+                    try { EspFriendlies = System.Convert.ToBoolean(legacyValue, System.Globalization.CultureInfo.InvariantCulture); } catch { EspFriendlies = true; }
+                }
+                else EspFriendlies = true;
+            }
+            if (!values.ContainsKey("EspMerchants"))
+            {
+                if (values.TryGetValue("EspEnemies", out legacyValue))
+                {
+                    try { EspMerchants = System.Convert.ToBoolean(legacyValue, System.Globalization.CultureInfo.InvariantCulture); } catch { EspMerchants = true; }
+                }
+                else EspMerchants = true;
+            }
+            if (!values.ContainsKey("EspHealthBarHeight")) EspHealthBarHeight = 3;
+
             System.Reflection.FieldInfo[] fields = typeof(FoATrainerRuntime).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
             for (int i = 0; i < fields.Length; i++)
             {
@@ -3666,7 +3813,9 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             if (EspItems) c++;
             if (EspContainers) c++;
             if (EspEnemies) c++;
+            if (EspFriendlies) c++;
             if (EspNpcs) c++;
+            if (EspMerchants) c++;
         }
         return c;
     }
@@ -4032,8 +4181,10 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         Section("Объекты ESP");
         EspItems = Toggle("Предметы", EspItems, "");
         EspContainers = Toggle("Контейнеры", EspContainers, "");
-        EspEnemies = Toggle("Враги", EspEnemies, "");
-        EspNpcs = Toggle("NPC", EspNpcs, "");
+        EspEnemies = Toggle("Враждебные NPC / враги", EspEnemies, "");
+        EspFriendlies = Toggle("Дружественные NPC / союзники", EspFriendlies, "");
+        EspNpcs = Toggle("Нейтральные NPC", EspNpcs, "");
+        EspMerchants = Toggle("Торговцы", EspMerchants, "");
         EspShowDead = Toggle("Показывать мертвых NPC / врагов", EspShowDead, "");
         EspShowLootState = Toggle("Статус контейнеров / трупов", EspShowLootState, "");
         EspHideEmptyLoot = Toggle("Скрывать пустые контейнеры / трупы", EspHideEmptyLoot, "");
@@ -4050,12 +4201,12 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         SettingFloat("Предметы - дальность", ref EspItemDistance, 5f, 1000f, "m");
         SettingFloat("Контейнеры - дальность", ref EspContainerDistance, 5f, 1000f, "m");
         SettingFloat("Враги - дальность", ref EspEnemyDistance, 5f, 2000f, "m");
-        SettingFloat("NPC - дальность", ref EspNpcDistance, 5f, 2000f, "m");
+        SettingFloat("NPC / союзники / торговцы - дальность", ref EspNpcDistance, 5f, 2000f, "m");
 
         Section("Отображение ESP");
         EspShowNames = Toggle("Название", EspShowNames, "");
         EspShowDistance = Toggle("Расстояние", EspShowDistance, "");
-        EspShowHealth = Toggle("HP врагов / NPC", EspShowHealth, "");
+        EspShowHealth = Toggle("HP существ / NPC", EspShowHealth, "");
         EspShowHealthBars = Toggle("Полоски HP", EspShowHealthBars, "");
         SettingInt("Ширина полоски HP", ref EspHealthBarWidth, 8, 120);
         SettingInt("Высота полоски HP", ref EspHealthBarHeight, 1, 8);
@@ -4070,7 +4221,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         Section("Статус ESP");
         UnityEngine.GUILayout.Label((Language == 1 ? "В кеше: " : "Cached: ") + _espEntries.Count + (Language == 1 ? "  |  На экране: " : "  |  On screen: ") + _espVisibleLastFrame + "  |  Camera: " + _espCameraName, _statusStyle);
         UnityEngine.GUILayout.Label(L(_espStatus), _statusStyle);
-        UnityEngine.GUILayout.Label(L("Цвета: предметы - голубой, контейнеры - оранжевый, враги - красный, NPC - зеленый, трупы / пустые - серый."), _statusStyle);
+        UnityEngine.GUILayout.Label(L("Цвета: враги - красный, союзники - зеленый, нейтральные - желтый, торговцы - фиолетовый."), _statusStyle);
         if (UnityEngine.GUILayout.Button(L("ПЕРЕСКАНИРОВАТЬ ESP"), _buttonStyle, UnityEngine.GUILayout.Height(30))) _espNextScan = 0f;
     }
 
