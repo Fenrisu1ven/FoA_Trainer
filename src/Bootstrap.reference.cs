@@ -12,7 +12,7 @@ using BepInEx;
 
 namespace FoATrainer
 {
-    [BepInPlugin("rijiy.foa.trainer.v19", "Tainted Grail Trainer by Rijiy V19", "2.7.0")]
+    [BepInPlugin("rijiy.foa.trainer.v19", "Tainted Grail Trainer by Rijiy V19.1", "2.7.1")]
     public class Bootstrap : BaseUnityPlugin
     {
         private const string BootLog = @"BepInEx\FoATrainer_boot.log";
@@ -20,10 +20,10 @@ namespace FoATrainer
 
         private void Awake()
         {
-            Log("[FoATrainer.V19] Awake entered");
+            Log("[FoATrainer.V19.1] Awake entered");
 
             Assembly mcs = Assembly.Load("mcs");
-            Log("[FoATrainer.V19] mcs assembly loaded");
+            Log("[FoATrainer.V19.1] mcs assembly loaded");
 
             Type settingsType = mcs.GetType("Mono.CSharp.CompilerSettings");
             object settings = Activator.CreateInstance(settingsType);
@@ -47,7 +47,7 @@ namespace FoATrainer
 
             string runtimeSource = LoadEmbeddedRuntimeSource();
             MethodInfo run = evaluatorType.GetMethod("Run");
-            Log("[FoATrainer.V19] Compiling runtime source");
+            Log("[FoATrainer.V19.1] Compiling runtime source");
             run.Invoke(evaluator, new object[] { runtimeSource });
 
             // The game's Mono.CSharp evaluator can deadlock on a second Run call after a
@@ -57,9 +57,9 @@ namespace FoATrainer
             PropertyInfo builderProperty = moduleContainer.GetType().GetProperty("Builder");
             Module runtimeModule = (Module)builderProperty.GetValue(moduleContainer, null);
             Type runtimeType = runtimeModule.GetType("FoATrainerRuntime");
-            Log("[FoATrainer.V19] Starting runtime");
+            Log("[FoATrainer.V19.1] Starting runtime");
             runtimeType.GetMethod("Start").Invoke(null, null);
-            Log("[FoATrainer.V19] Awake completed");
+            Log("[FoATrainer.V19.1] Awake completed");
         }
 
         private static string LoadEmbeddedRuntimeSource()

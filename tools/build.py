@@ -2,7 +2,7 @@ import struct, uuid, pathlib
 from collections import OrderedDict
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / 'dist' / 'FoATrainer_V19.dll'
+OUT = ROOT / 'dist' / 'FoATrainer_V19_1.dll'
 SRC = (ROOT / 'src' / 'FoATrainerRuntime.cs').read_text(encoding='utf-8')
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
@@ -42,7 +42,7 @@ class USHeap:
         payload=b+bytes([special]); self.data.extend(c_uint(len(payload))); self.data.extend(payload); return off
 
 strings=StringHeap(); blobs=BlobHeap(); us=USHeap(); idx={}
-for s in ['FoATrainer_V19.dll','<Module>','Bootstrap','FoATrainer','.ctor','Awake',
+for s in ['FoATrainer_V19_1.dll','<Module>','Bootstrap','FoATrainer','.ctor','Awake',
           'Object','System','Assembly','System.Reflection','BaseUnityPlugin','BepInEx','BepInPlugin',
           'File','System.IO','Type','Activator','MethodInfo','StreamWriter','System.IO','Boolean',
           'FieldInfo','PropertyInfo','Module','BindingFlags','Load','GetType','CreateInstance',
@@ -71,7 +71,7 @@ sig_object_gettype=blobs.add(b'\x20\x00'+sig_class(TR_TYPE))
 sig_getproperty=blobs.add(b'\x20\x01'+sig_class(TR_PROPERTYINFO)+b'\x0e')
 sig_property_getvalue=blobs.add(b'\x20\x02\x1c\x1c\x1d\x1c')
 sig_module_gettype=blobs.add(b'\x20\x01'+sig_class(TR_TYPE)+b'\x0e')
-ca_blob=blobs.add(b'\x01\x00'+ser_string('rijiy.foa.trainer.v19')+ser_string('Tainted Grail Trainer by Rijiy V19')+ser_string('2.7.0')+b'\x00\x00')
+ca_blob=blobs.add(b'\x01\x00'+ser_string('rijiy.foa.trainer.v19')+ser_string('Tainted Grail Trainer by Rijiy V19.1')+ser_string('2.7.1')+b'\x00\x00')
 mscorlib_token=blobs.add(bytes.fromhex('b77a5c561934e089'))
 # locals: Assembly, Type, object, Type, StreamWriter, object, Type, object, Type, object, MethodInfo
 locals_sig=blobs.add(b'\x07\x0b'+sig_class(TR_ASSEMBLY)+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_TYPE)+sig_class(TR_STREAMWRITER)+b'\x1c'+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_METHODINFO))
@@ -120,42 +120,42 @@ def invoke_method(mi_local, target_il, args_ils):
 ctor_il=b'\x02'+tok(0x28,TOKEN_MEMBERREF(MR_BASE_CTOR))+b'\x2a'
 ctor_body=bytes([(len(ctor_il)<<2)|2])+ctor_il
 
-il=bytearray(); il+=log_il('[FoATrainer.V19] Awake entered')
+il=bytearray(); il+=log_il('[FoATrainer.V19.1] Awake entered')
 # mcs assembly
 il+=tok(0x72,TOKEN_US(us.add('mcs')))+tok(0x28,TOKEN_MEMBERREF(MR_ASM_LOAD))+stloc(0)
-il+=log_il('[FoATrainer.V19] mcs assembly loaded')
+il+=log_il('[FoATrainer.V19.1] mcs assembly loaded')
 # settings type + instance
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.CompilerSettings')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(1)
 il+=ldloc(1)+tok(0x28,TOKEN_MEMBERREF(MR_ACT_CREATE1))+stloc(2)
-il+=log_il('[FoATrainer.V19] CompilerSettings created')
+il+=log_il('[FoATrainer.V19.1] CompilerSettings created')
 # writer
 il+=tok(0x72,TOKEN_US(us.add('BepInEx\\FoATrainer_compile.log')))+tok(0x73,TOKEN_MEMBERREF(MR_SW_CTOR))+stloc(4)
 il+=ldloc(4)+b'\x17'+tok(0x6f,TOKEN_MEMBERREF(MR_SW_AUTOFLUSH))
 # report type + instance
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.StreamReportPrinter')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(3)
 il+=activator_create_with_args(3,[ldloc(4)])+stloc(5)
-il+=log_il('[FoATrainer.V19] StreamReportPrinter created')
+il+=log_il('[FoATrainer.V19.1] StreamReportPrinter created')
 # context
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.CompilerContext')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(6)
 il+=activator_create_with_args(6,[ldloc(2),ldloc(5)])+stloc(7)
-il+=log_il('[FoATrainer.V19] CompilerContext created')
+il+=log_il('[FoATrainer.V19.1] CompilerContext created')
 # evaluator
 il+=ldloc(0)+tok(0x72,TOKEN_US(us.add('Mono.CSharp.Evaluator')))+tok(0x6f,TOKEN_MEMBERREF(MR_ASM_GETTYPE))+stloc(8)
 il+=activator_create_with_args(8,[ldloc(7)])+stloc(9)
-il+=log_il('[FoATrainer.V19] Evaluator created')
+il+=log_il('[FoATrainer.V19.1] Evaluator created')
 # get ReferenceAssembly MethodInfo
 il+=ldloc(8)+tok(0x72,TOKEN_US(us.add('ReferenceAssembly')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETMETHOD))+stloc(10)
 # references
 for off,name in zip(asm_us,asm_names):
-    il+=log_il('[FoATrainer.V19] Referencing '+name)
+    il+=log_il('[FoATrainer.V19.1] Referencing '+name)
     arg=tok(0x72,TOKEN_US(off))+tok(0x28,TOKEN_MEMBERREF(MR_ASM_LOAD))
     il+=invoke_method(10,ldloc(9),[arg])+b'\x26'
-    il+=log_il('[FoATrainer.V19] Reference OK '+name)
+    il+=log_il('[FoATrainer.V19.1] Reference OK '+name)
 # get Run MethodInfo
 il+=ldloc(8)+tok(0x72,TOKEN_US(us.add('Run')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETMETHOD))+stloc(10)
-il+=log_il('[FoATrainer.V19] Compiling runtime source')
+il+=log_il('[FoATrainer.V19.1] Compiling runtime source')
 il+=invoke_method(10,ldloc(9),[tok(0x72,TOKEN_US(src_us))])+b'\x26'
-il+=log_il('[FoATrainer.V19] Locating compiled runtime')
+il+=log_il('[FoATrainer.V19.1] Locating compiled runtime')
 # Evaluator.Run deadlocks on a second submission in the game's Mono.CSharp build.
 # Retrieve the emitted ModuleBuilder from Evaluator.module and invoke Start directly.
 il+=ldloc(8)+tok(0x72,TOKEN_US(us.add('module')))+ldc_i4(36)+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETFIELD))+stloc(2)
@@ -164,10 +164,10 @@ il+=ldloc(5)+tok(0x6f,TOKEN_MEMBERREF(MR_OBJECT_GETTYPE))+stloc(1)
 il+=ldloc(1)+tok(0x72,TOKEN_US(us.add('Builder')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETPROPERTY))+stloc(2)
 il+=ldloc(2)+tok(0x74,TOKEN_TYPEREF(TR_PROPERTYINFO))+ldloc(5)+b'\x14'+tok(0x6f,TOKEN_MEMBERREF(MR_PROPERTY_GETVALUE))+stloc(7)
 il+=ldloc(7)+tok(0x74,TOKEN_TYPEREF(TR_MODULE))+tok(0x72,TOKEN_US(us.add('FoATrainerRuntime')))+tok(0x6f,TOKEN_MEMBERREF(MR_MODULE_GETTYPE))+stloc(1)
-il+=log_il('[FoATrainer.V19] Starting runtime')
+il+=log_il('[FoATrainer.V19.1] Starting runtime')
 il+=ldloc(1)+tok(0x72,TOKEN_US(us.add('Start')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETMETHOD))+stloc(10)
 il+=invoke_method(10,b'\x14',[])+b'\x26'
-il+=log_il('[FoATrainer.V19] Awake completed')+b'\x2a'
+il+=log_il('[FoATrainer.V19.1] Awake completed')+b'\x2a'
 awake_body=struct.pack('<HHII',0x3013,16,len(il),TOKEN_STANDALONESIG(1))+il  # fat, initlocals
 
 sect=bytearray(); ctor_off=0; sect+=ctor_body
@@ -191,7 +191,7 @@ table=bytearray(); table+=u32(0)+bytes([2,0,heap_sizes,1])+u64(valid)+u64(0)
 for t in range(64):
     if t in rows:table+=u32(rows[t])
 # Module
-table+=u16(0)+u16(idx['FoATrainer_V19.dll'])+u16(1)+u16(0)+u16(0)
+table+=u16(0)+u16(idx['FoATrainer_V19_1.dll'])+u16(1)+u16(0)+u16(0)
 # TypeRefs
 trs=[
  (1,'Object','System'),(1,'Assembly','System.Reflection'),(2,'BaseUnityPlugin','BepInEx'),(2,'BepInPlugin','BepInEx'),

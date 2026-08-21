@@ -27,3 +27,4 @@ references/
 *.dll
 !dist/FoATrainer_V18_4.dll
 !dist/FoATrainer_V19.dll
+!dist/FoATrainer_V19_1.dll

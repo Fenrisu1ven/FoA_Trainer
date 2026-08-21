@@ -81,7 +81,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     public static float GameSpeed = 2.5f;
     public static float MovementSpeed = 2.0f;
     public static float JumpHeight = 2.0f;
-    public static float TimePassSpeed = 0.5f;
+    public static float TimePassSpeed = 1.0f;
     public static float FlightSpeed = 10.0f;
     public static float FlightBoost = 3.0f;
 
@@ -241,6 +241,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static System.Reflection.FieldInfo _weatherCurrentIndexField;
     static System.Reflection.FieldInfo _weatherPresetNameField;
     static System.Reflection.MethodInfo _weatherSetPresetMethod;
+    static System.Reflection.MethodInfo _weatherOnTimeChangedMethod;
     static float _weatherNextRefresh;
     static int _weatherCurrentIndex = -1;
     static float _weatherPrecipitationIntensity;
@@ -249,6 +250,29 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static bool _weatherHeavyRain;
     static bool _weatherDropdownOpen;
     static string _weatherStatus = "Погодная система еще не загружена";
+
+    // V19.1: native time-of-day control through GameRealTime. The game clock is read from
+    // WeatherTime, exact changes use SetWeatherTime (including quest/spawner notifications),
+    // and natural progression speed uses SetWeatherDayDuration rather than Unity timeScale.
+    static BepInEx.Configuration.ConfigEntry<bool> _freezeTimeConfig;
+    static BepInEx.Configuration.ConfigEntry<bool> _timeSpeedEnabledConfig;
+    static BepInEx.Configuration.ConfigEntry<float> _timeSpeedConfig;
+    static object _gameRealTime;
+    static System.Reflection.MethodInfo _setWeatherTimeMethod;
+    static System.Reflection.MethodInfo _setWeatherDayDurationMethod;
+    static float _nativeWeatherSecondsPerRealSecond;
+    static bool _nativeTimeRateCaptured;
+    static bool _nativeTimeRateApplied;
+    static bool _nativeTimeRateControlAvailable;
+    static bool _timeManualSetInProgress;
+    static float _timeNextRefresh;
+    static float _currentTimeMinutes;
+    static float _timeSliderMinutes;
+    static bool _timeSliderDragging;
+    static string _timeInput = "12:00";
+    static bool _timeInputInitialized;
+    static int _dawnMinutes = -1;
+    static string _timeStatus = "Игровое время еще не загружено";
 
     static bool _stealthSaved;
     static float _visOrig, _crouchVisOrig, _noiseOrig, _crouchNoiseOrig;
@@ -374,6 +398,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         {
             SetFlight(false);
             RestoreAllTemporaryStats();
+            RestoreNativeTimeRate();
             if (_harmony != null) _harmony.UnpatchSelf();
         }
         catch { }
@@ -592,6 +617,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         {
             HandleHotkeys();
             HandleContinuousResize();
+            MaintainTimeControl();
             MaintainWeatherControl();
             if (_menuVisible)
             {
@@ -719,6 +745,25 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                 "Zero-based index from the native WeatherController preset list.");
             _weatherOverrideEnabled = _weatherOverrideConfig.Value;
             _selectedWeatherPreset = System.Math.Max(0, _weatherPresetConfig.Value);
+
+            _freezeTimeConfig = _weatherConfig.Bind<bool>(
+                "TimeOfDay",
+                "FreezeTimeOfDay",
+                false,
+                "Freeze only the native day/night clock. Gameplay, AI and Unity timeScale remain active.");
+            _timeSpeedEnabledConfig = _weatherConfig.Bind<bool>(
+                "TimeOfDay",
+                "TimeSpeedEnabled",
+                false,
+                "Use a custom native day/night progression multiplier.");
+            _timeSpeedConfig = _weatherConfig.Bind<float>(
+                "TimeOfDay",
+                "TimeSpeedMultiplier",
+                1f,
+                "Native day/night progression multiplier from 0x to 10x. Does not change Unity timeScale.");
+            FreezeDaytime = _freezeTimeConfig.Value;
+            TimePassSpeedEnabled = _timeSpeedEnabledConfig.Value;
+            TimePassSpeed = Clamp(_timeSpeedConfig.Value, 0f, 10f);
         }
         catch (System.Exception ex)
         {
@@ -738,6 +783,21 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         catch (System.Exception ex)
         {
             if (_log != null) _log.LogWarning("[FoATrainer] Weather config save error: " + ex.Message);
+        }
+    }
+
+    static void SaveTimeConfig()
+    {
+        try
+        {
+            if (_freezeTimeConfig != null) _freezeTimeConfig.Value = FreezeDaytime;
+            if (_timeSpeedEnabledConfig != null) _timeSpeedEnabledConfig.Value = TimePassSpeedEnabled;
+            if (_timeSpeedConfig != null) _timeSpeedConfig.Value = Clamp(TimePassSpeed, 0f, 10f);
+            if (_weatherConfig != null) _weatherConfig.Save();
+        }
+        catch (System.Exception ex)
+        {
+            if (_log != null) _log.LogWarning("[FoATrainer] Time config save error: " + ex.Message);
         }
     }
 
@@ -769,12 +829,14 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         _weatherCurrentIndexField = null;
         _weatherPresetNameField = null;
         _weatherSetPresetMethod = null;
+        _weatherOnTimeChangedMethod = null;
         if (controller == null) return;
 
         System.Type type = controller.GetType();
         _weatherPresetsField = FindField(type, "_presets");
         _weatherCurrentIndexField = FindField(type, "_currentIndex");
         _weatherSetPresetMethod = FindMethod(type, "SetPreset", 1);
+        _weatherOnTimeChangedMethod = FindMethod(type, "OnTimeChanged", 1);
     }
 
     static void RefreshWeatherPresets()
@@ -824,6 +886,17 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         try
         {
             _weatherSetPresetMethod.Invoke(_weatherController, new object[] { index });
+            // WeatherController.SetPreset changes only the active curve index. The native
+            // controller evaluates that curve and updates rain/snow in OnTimeChanged.
+            // Invoke the same native handler immediately so a preset is visible even when
+            // the day/night clock is frozen or running very slowly.
+            object gameRealTime = _gameRealTime;
+            if (gameRealTime == null || IsDiscarded(gameRealTime)) gameRealTime = GetProp(_weatherController, "ParentModel");
+            object weatherTime = gameRealTime == null ? null : GetProp(gameRealTime, "WeatherTime");
+            if (_weatherOnTimeChangedMethod != null && weatherTime != null)
+            {
+                _weatherOnTimeChangedMethod.Invoke(_weatherController, new object[] { weatherTime });
+            }
             _weatherCurrentIndex = index;
             if (announce) _lastAction = "Погода: " + WeatherPresetName(index);
             return true;
@@ -904,6 +977,235 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         {
             _weatherStatus = "WeatherController: " + ex.Message;
             if (_log != null) _log.LogWarning("[FoATrainer] Weather update error: " + ex.Message);
+        }
+    }
+
+    // ============================ V19.1: native time of day ============================
+    static object FindGameRealTime()
+    {
+        System.Collections.IEnumerable all = WorldAll("Awaken.TG.Main.Timing.GameRealTime");
+        if (all == null) return null;
+        try
+        {
+            foreach (object model in all)
+            {
+                if (model != null && !IsDiscarded(model)) return model;
+            }
+        }
+        catch (System.Exception ex)
+        {
+            _timeStatus = "Ошибка поиска GameRealTime: " + ex.Message;
+        }
+        return null;
+    }
+
+    static void ResetTimeAccessors(object gameRealTime)
+    {
+        if (_gameRealTime != null && !object.ReferenceEquals(_gameRealTime, gameRealTime))
+        {
+            RestoreNativeTimeRate();
+        }
+        _gameRealTime = gameRealTime;
+        _setWeatherTimeMethod = null;
+        _setWeatherDayDurationMethod = null;
+        _nativeWeatherSecondsPerRealSecond = 0f;
+        _nativeTimeRateCaptured = false;
+        _nativeTimeRateApplied = false;
+        _nativeTimeRateControlAvailable = false;
+        if (gameRealTime == null) return;
+
+        System.Type type = gameRealTime.GetType();
+        _setWeatherTimeMethod = FindMethod(type, "SetWeatherTime", 4);
+        _setWeatherDayDurationMethod = FindMethod(type, "SetWeatherDayDuration", 1);
+        float nativeRate = ToFloat(GetProp(gameRealTime, "WeatherSecondsPerRealSecond"), 0f);
+        if (nativeRate > 0.0001f)
+        {
+            _nativeWeatherSecondsPerRealSecond = nativeRate;
+            _nativeTimeRateCaptured = true;
+        }
+        _nativeTimeRateControlAvailable = _setWeatherDayDurationMethod != null && _nativeTimeRateCaptured;
+        ApplyNativeTimeRate();
+    }
+
+    static void RestoreNativeTimeRate()
+    {
+        if (_gameRealTime == null || _setWeatherDayDurationMethod == null || !_nativeTimeRateCaptured || !_nativeTimeRateApplied) return;
+        try
+        {
+            float nativeDurationMinutes = 1440f / _nativeWeatherSecondsPerRealSecond;
+            _setWeatherDayDurationMethod.Invoke(_gameRealTime, new object[] { nativeDurationMinutes });
+        }
+        catch (System.Exception ex)
+        {
+            if (_log != null) _log.LogWarning("[FoATrainer] Restore native time rate error: " + ex.Message);
+        }
+        _nativeTimeRateApplied = false;
+    }
+
+    static void ApplyNativeTimeRate()
+    {
+        if (_gameRealTime == null || _setWeatherDayDurationMethod == null || !_nativeTimeRateCaptured) return;
+        bool shouldOverride = FreezeDaytime || TimePassSpeedEnabled;
+        if (!shouldOverride)
+        {
+            RestoreNativeTimeRate();
+            return;
+        }
+
+        float multiplier = FreezeDaytime ? 0f : Clamp(TimePassSpeed, 0f, 10f);
+        float desiredRate = _nativeWeatherSecondsPerRealSecond * multiplier;
+        try
+        {
+            float currentRate = ToFloat(GetProp(_gameRealTime, "WeatherSecondsPerRealSecond"), -1f);
+            if (currentRate < 0f || System.Math.Abs(currentRate - desiredRate) > 0.001f)
+            {
+                float durationMinutes = desiredRate <= 0.0001f ? float.PositiveInfinity : 1440f / desiredRate;
+                _setWeatherDayDurationMethod.Invoke(_gameRealTime, new object[] { durationMinutes });
+            }
+            _nativeTimeRateApplied = true;
+            _nativeTimeRateControlAvailable = true;
+        }
+        catch (System.Exception ex)
+        {
+            _nativeTimeRateControlAvailable = false;
+            _timeStatus = "Ошибка скорости времени: " + ex.Message;
+            if (_log != null) _log.LogWarning("[FoATrainer] Native time rate error: " + ex.Message);
+        }
+    }
+
+    static void SetFreezeDaytime(bool enabled)
+    {
+        FreezeDaytime = enabled;
+        SaveTimeConfig();
+        ApplyNativeTimeRate();
+        _lastAction = enabled ? "Время суток зафиксировано" : "Время суток возобновлено";
+    }
+
+    static void SetTimePassSpeedEnabled(bool enabled)
+    {
+        TimePassSpeedEnabled = enabled;
+        SaveTimeConfig();
+        ApplyNativeTimeRate();
+        _lastAction = enabled ? "Скорость времени: " + TimePassSpeed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "x" : "Штатная скорость времени";
+    }
+
+    static bool SetGameTime(int hour, int minute, bool announce)
+    {
+        hour = UnityEngine.Mathf.Clamp(hour, 0, 23);
+        minute = UnityEngine.Mathf.Clamp(minute, 0, 59);
+        if (_gameRealTime == null || IsDiscarded(_gameRealTime)) ResetTimeAccessors(FindGameRealTime());
+        if (_gameRealTime == null || _setWeatherTimeMethod == null)
+        {
+            _timeStatus = "GameRealTime.SetWeatherTime недоступен";
+            return false;
+        }
+        try
+        {
+            _timeManualSetInProgress = true;
+            _setWeatherTimeMethod.Invoke(_gameRealTime, new object[] { hour, minute, null, null });
+            _currentTimeMinutes = hour * 60f + minute;
+            _timeSliderMinutes = _currentTimeMinutes;
+            _timeInput = hour.ToString("00") + ":" + minute.ToString("00");
+            _timeInputInitialized = true;
+            if (announce) _lastAction = "Время суток: " + _timeInput;
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            _timeStatus = "Ошибка установки времени: " + ex.Message;
+            if (_log != null) _log.LogWarning("[FoATrainer] SetWeatherTime error: " + ex.Message);
+            return false;
+        }
+        finally
+        {
+            _timeManualSetInProgress = false;
+        }
+    }
+
+    static bool TrySetGameTime(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        string[] parts = text.Trim().Split(':');
+        if (parts.Length != 2) return false;
+        int hour;
+        int minute;
+        try
+        {
+            hour = System.Convert.ToInt32(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            minute = System.Convert.ToInt32(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch { return false; }
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return false;
+        return SetGameTime(hour, minute, true);
+    }
+
+    static string FormatTime(float minutes)
+    {
+        int total = UnityEngine.Mathf.Clamp(UnityEngine.Mathf.RoundToInt(minutes), 0, 1439);
+        return (total / 60).ToString("00") + ":" + (total % 60).ToString("00");
+    }
+
+    static int DawnMinutes()
+    {
+        if (_dawnMinutes >= 0) return _dawnMinutes;
+        _dawnMinutes = 360;
+        try
+        {
+            System.Type type = FindType("Awaken.Utility.Times.ARDateTime");
+            System.Reflection.PropertyInfo property = type == null ? null : type.GetProperty("NightEndTime", AllFlags);
+            object value = property == null ? null : property.GetValue(null, null);
+            if (value is System.TimeSpan)
+            {
+                _dawnMinutes = UnityEngine.Mathf.Clamp((int)System.Math.Round(((System.TimeSpan)value).TotalMinutes), 0, 1439);
+            }
+        }
+        catch { }
+        return _dawnMinutes;
+    }
+
+    static void MaintainTimeControl()
+    {
+        if (UnityEngine.Time.unscaledTime < _timeNextRefresh) return;
+        _timeNextRefresh = UnityEngine.Time.unscaledTime + 0.25f;
+        try
+        {
+            if (_weatherConfig == null) InitializeWeatherConfig();
+            if (_gameRealTime == null || IsDiscarded(_gameRealTime)) ResetTimeAccessors(FindGameRealTime());
+            if (_gameRealTime == null)
+            {
+                _timeStatus = "Игровое время еще не загружено";
+                return;
+            }
+
+            object weatherTime = GetProp(_gameRealTime, "WeatherTime");
+            object dateValue = GetProp(weatherTime, "Date");
+            int hour;
+            int minute;
+            if (dateValue is System.DateTime)
+            {
+                System.DateTime date = (System.DateTime)dateValue;
+                hour = date.Hour;
+                minute = date.Minute;
+            }
+            else
+            {
+                hour = ToInt(GetProp(weatherTime, "Hour"), 0);
+                minute = ToInt(GetProp(weatherTime, "Minutes"), 0);
+            }
+            _currentTimeMinutes = UnityEngine.Mathf.Clamp(hour * 60f + minute, 0f, 1439f);
+            if (!_timeSliderDragging) _timeSliderMinutes = _currentTimeMinutes;
+            if (!_timeInputInitialized)
+            {
+                _timeInput = FormatTime(_currentTimeMinutes);
+                _timeInputInitialized = true;
+            }
+            ApplyNativeTimeRate();
+            _timeStatus = "GameRealTime: " + FormatTime(_currentTimeMinutes);
+        }
+        catch (System.Exception ex)
+        {
+            _timeStatus = "GameRealTime: " + ex.Message;
+            if (_log != null) _log.LogWarning("[FoATrainer] Time update error: " + ex.Message);
         }
     }
 
@@ -1932,11 +2234,14 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         InfiniteProfExp = false;
         ProfExpMultiplierEnabled = false;
         NoFallDamage = false;
-        FreezeDaytime = false;
-        TimePassSpeedEnabled = false;
         EspEnabled = false;
         _espEntries.Clear();
-        if (includeWeather) SetWeatherOverride(false);
+        if (includeWeather)
+        {
+            SetFreezeDaytime(false);
+            SetTimePassSpeedEnabled(false);
+            SetWeatherOverride(false);
+        }
         _lastAction = "Все переключаемые функции отключены";
     }
 
@@ -2013,6 +2318,16 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         d["Урон и расход ресурсов"] = "Damage and resources";
         d["Передвижение и физика"] = "Movement and physics";
         d["Скорость игры и время"] = "Game speed and time";
+        d["Время суток"] = "Time of day";
+        d["Текущее время"] = "Current time";
+        d["Точное время (HH:mm)"] = "Exact time (HH:mm)";
+        d["УСТАНОВИТЬ"] = "SET";
+        d["Рассвет"] = "Dawn";
+        d["Утро"] = "Morning";
+        d["Полдень"] = "Noon";
+        d["Вечер"] = "Evening";
+        d["Полночь"] = "Midnight";
+        d["Время изменяется штатным GameRealTime.SetWeatherTime. Более раннее время переносится на следующий игровой день."] = "Time is changed through native GameRealTime.SetWeatherTime. Selecting an earlier time advances to the next game day.";
         d["Погода"] = "Weather";
         d["Принудительная погода"] = "Forced weather";
         d["Выбор погоды"] = "Weather selection";
@@ -2462,6 +2777,11 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                name == "MovementSpeedEnabled" || name == "JumpHeightEnabled" || name == "GameSpeedEnabled" || name == "FlightEnabled";
     }
 
+    static bool IsIndependentConfigField(string name)
+    {
+        return name == "FreezeDaytime" || name == "TimePassSpeedEnabled" || name == "TimePassSpeed";
+    }
+
     static void RefreshProfiles()
     {
         try
@@ -2499,6 +2819,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             for (int i = 0; i < fields.Length; i++)
             {
                 System.Reflection.FieldInfo f = fields[i];
+                if (IsIndependentConfigField(f.Name)) continue;
                 if (f.FieldType == typeof(bool) || f.FieldType == typeof(int) || f.FieldType == typeof(float))
                 {
                     object v = f.GetValue(null);
@@ -2534,7 +2855,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                 values[lines[i].Substring(0, eq)] = lines[i].Substring(eq + 1);
             }
 
-            // Weather is stored independently in BepInEx Config and is not part of profiles.
+            // Weather and time-of-day settings are stored independently in BepInEx Config
+            // and are not overwritten by old or newly saved profiles.
             DisableAllFunctions(false);
             // Backward-compatible defaults for profiles created before the new ESP categories.
             // Friendly NPCs previously followed the generic NPC toggle; merchants were usually
@@ -2562,6 +2884,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             for (int i = 0; i < fields.Length; i++)
             {
                 System.Reflection.FieldInfo f = fields[i];
+                if (IsIndependentConfigField(f.Name)) continue;
                 string text;
                 if (!values.TryGetValue(f.Name, out text)) continue;
                 if (f.FieldType == typeof(bool) && !IsSpecialProfileToggle(f.Name))
@@ -3322,8 +3645,11 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
 
     static bool WeatherSecondsPrefix(ref float __0)
     {
+        if (_timeManualSetInProgress || _nativeTimeRateControlAvailable) return true;
+        // Fallback for the short interval before GameRealTime and its native
+        // SetWeatherDayDuration API become available after loading a save.
         if (FreezeDaytime) return false;
-        if (TimePassSpeedEnabled) __0 *= Clamp(TimePassSpeed, 0f, 100f);
+        if (TimePassSpeedEnabled) __0 *= Clamp(TimePassSpeed, 0f, 10f);
         return true;
     }
 
@@ -3620,8 +3946,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Keypad6)) SetMovementSpeed(!MovementSpeedEnabled);
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Keypad7)) SetJumpHeight(!JumpHeightEnabled);
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Keypad8)) NoFallDamage = !NoFallDamage;
-            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Keypad9)) FreezeDaytime = !FreezeDaytime;
-            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Keypad0)) TimePassSpeedEnabled = !TimePassSpeedEnabled;
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Keypad9)) SetFreezeDaytime(!FreezeDaytime);
+            if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Keypad0)) SetTimePassSpeedEnabled(!TimePassSpeedEnabled);
 
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Alpha1)) ApplyProfStat("LightArmor", LightArmorValue, "Легкая броня");
             if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.Alpha2)) ApplyProfStat("MediumArmor", MediumArmorValue, "Средняя броня");
@@ -4126,7 +4452,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         UnityEngine.GUILayout.BeginHorizontal(UnityEngine.GUILayout.Height(38));
         UnityEngine.GUILayout.BeginVertical(UnityEngine.GUILayout.Width(330));
         UnityEngine.GUILayout.Label("TAINTED GRAIL - TRAINER", _titleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(22));
-        UnityEngine.GUILayout.Label("BepInEx v5 Mono  |  EN / RU  |  v2.7.0", _subtitleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(15));
+        UnityEngine.GUILayout.Label("BepInEx v5 Mono  |  EN / RU  |  v2.7.1", _subtitleStyle, UnityEngine.GUILayout.Width(330), UnityEngine.GUILayout.Height(15));
         UnityEngine.GUILayout.EndVertical();
         UnityEngine.GUILayout.FlexibleSpace();
         UnityEngine.GUILayout.Label(L("Активно: ") + ActiveCheatCount(), _hotkeyStyle, UnityEngine.GUILayout.Width(88), UnityEngine.GUILayout.Height(28));
@@ -4377,12 +4703,66 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
         InfiniteProfExp = Toggle("Бесконечный опыт мастерства", InfiniteProfExp, "Alt+Num 3");
         ProfExpMultiplierEnabled = ToggleFloat("Множитель опыта мастерства", ProfExpMultiplierEnabled, ref ProfExpMultiplier, "Alt+Num 4", 0f, 10000f, 0f, 100f);
 
-        Section("Скорость игры и время");
+        Section("Скорость игры");
         bool gs = ToggleFloat("Скорость игры", GameSpeedEnabled, ref GameSpeed, "Alt+Num 5", 0.05f, 20f, 0.05f, 5f); if (gs != GameSpeedEnabled) SetGameSpeed(gs);
-        FreezeDaytime = Toggle("Заморозить время суток", FreezeDaytime, "Alt+Num 9");
-        TimePassSpeedEnabled = ToggleFloat("Скорость течения времени", TimePassSpeedEnabled, ref TimePassSpeed, "Alt+Num 0", 0f, 100f, 0f, 10f);
 
+        DrawTimeOfDaySection();
         DrawWeatherSection();
+    }
+
+    void DrawTimeOfDaySection()
+    {
+        Section("Время суток");
+
+        UnityEngine.GUILayout.BeginHorizontal(_cardStyle, UnityEngine.GUILayout.Height(40));
+        UnityEngine.GUILayout.Label(L("Текущее время") + ": " + (_gameRealTime == null ? "--:--" : FormatTime(_currentTimeMinutes)), _actionLabelStyle, UnityEngine.GUILayout.Width(190), UnityEngine.GUILayout.Height(27));
+        float sliderValue = UnityEngine.GUILayout.HorizontalSlider(_timeSliderMinutes, 0f, 1439f, UnityEngine.GUILayout.Height(27));
+        UnityEngine.Rect sliderRect = UnityEngine.GUILayoutUtility.GetLastRect();
+        UnityEngine.Event guiEvent = UnityEngine.Event.current;
+        if (guiEvent != null && guiEvent.rawType == UnityEngine.EventType.MouseDown && sliderRect.Contains(guiEvent.mousePosition)) _timeSliderDragging = true;
+        if (_timeSliderDragging) _timeSliderMinutes = UnityEngine.Mathf.Clamp(UnityEngine.Mathf.Round(sliderValue), 0f, 1439f);
+        UnityEngine.GUILayout.Label(FormatTime(_timeSliderMinutes), _actionLabelStyle, UnityEngine.GUILayout.Width(58), UnityEngine.GUILayout.Height(27));
+        UnityEngine.GUILayout.EndHorizontal();
+        if (_timeSliderDragging && guiEvent != null && guiEvent.rawType == UnityEngine.EventType.MouseUp)
+        {
+            _timeSliderDragging = false;
+            int selectedMinutes = UnityEngine.Mathf.Clamp(UnityEngine.Mathf.RoundToInt(_timeSliderMinutes), 0, 1439);
+            SetGameTime(selectedMinutes / 60, selectedMinutes % 60, true);
+        }
+
+        UnityEngine.GUILayout.BeginHorizontal(_cardStyle, UnityEngine.GUILayout.Height(40));
+        UnityEngine.GUILayout.Label(L("Точное время (HH:mm)"), _actionLabelStyle, UnityEngine.GUILayout.Width(190), UnityEngine.GUILayout.Height(27));
+        _timeInput = UnityEngine.GUILayout.TextField(_timeInput ?? "", _textFieldStyle, UnityEngine.GUILayout.Width(82), UnityEngine.GUILayout.Height(27));
+        if (UnityEngine.GUILayout.Button(L("УСТАНОВИТЬ"), _buttonStyle, UnityEngine.GUILayout.Width(110), UnityEngine.GUILayout.Height(27)))
+        {
+            if (!TrySetGameTime(_timeInput)) _lastAction = "Неверный формат времени. Используйте HH:mm";
+        }
+        UnityEngine.GUILayout.FlexibleSpace();
+        UnityEngine.GUILayout.EndHorizontal();
+
+        int dawn = DawnMinutes();
+        UnityEngine.GUILayout.BeginHorizontal(_cardStyle, UnityEngine.GUILayout.Height(38));
+        if (UnityEngine.GUILayout.Button(L("Рассвет") + " " + FormatTime(dawn), _tabStyle, UnityEngine.GUILayout.Height(26))) SetGameTime(dawn / 60, dawn % 60, true);
+        if (UnityEngine.GUILayout.Button(L("Утро") + " 09:00", _tabStyle, UnityEngine.GUILayout.Height(26))) SetGameTime(9, 0, true);
+        if (UnityEngine.GUILayout.Button(L("Полдень") + " 12:00", _tabStyle, UnityEngine.GUILayout.Height(26))) SetGameTime(12, 0, true);
+        if (UnityEngine.GUILayout.Button(L("Вечер") + " 18:00", _tabStyle, UnityEngine.GUILayout.Height(26))) SetGameTime(18, 0, true);
+        if (UnityEngine.GUILayout.Button(L("Полночь") + " 00:00", _tabStyle, UnityEngine.GUILayout.Height(26))) SetGameTime(0, 0, true);
+        UnityEngine.GUILayout.EndHorizontal();
+
+        bool freeze = Toggle("Заморозить время суток", FreezeDaytime, "Alt+Num 9");
+        if (freeze != FreezeDaytime) SetFreezeDaytime(freeze);
+
+        float previousSpeed = TimePassSpeed;
+        bool speedEnabled = ToggleFloat("Скорость течения времени", TimePassSpeedEnabled, ref TimePassSpeed, "Alt+Num 0", 0f, 10f, 0f, 10f);
+        TimePassSpeed = Clamp(TimePassSpeed, 0f, 10f);
+        if (speedEnabled != TimePassSpeedEnabled) SetTimePassSpeedEnabled(speedEnabled);
+        if (System.Math.Abs(previousSpeed - TimePassSpeed) > 0.0001f)
+        {
+            SaveTimeConfig();
+            ApplyNativeTimeRate();
+        }
+
+        UnityEngine.GUILayout.Label(L("Время изменяется штатным GameRealTime.SetWeatherTime. Более раннее время переносится на следующий игровой день."), _footerStyle);
     }
 
     void DrawWeatherSection()

@@ -2,6 +2,19 @@
 
 All notable public changes to FoA Trainer are documented in this file.
 
+## [2.7.1] - V19.1
+
+- Added a dedicated native **Time of day** block to **XP / TIME**.
+- Added a live `HH:mm` clock, 00:00-23:59 slider, exact time input, and Dawn/Morning/Noon/Evening/Midnight buttons.
+- Read the absolute game clock from `GameRealTime.WeatherTime` and apply changes through the official `SetWeatherTime` method.
+- Preserved the game's own next-day behavior, time-change events, day/night events, quest notifications, and location-spawner updates.
+- Added a native Freeze Time mode and 0x-10x progression multiplier through `SetWeatherDayDuration`, without changing Unity `timeScale`.
+- Resolved Dawn from the game's `ARDateTime.NightEndTime` value instead of inventing a sunrise constant.
+- Stored time mode and multiplier in the existing V19 BepInEx Config while preventing old profiles from overwriting them.
+- Kept time controls independent from automatic/forced weather modes.
+- Re-evaluated the selected native weather curve immediately, so forced weather updates even while the day/night clock is frozen or slowed down.
+- Updated bootstrap identity, documentation, and release artifact to `FoATrainer_V19_1.dll` / `2.7.1`.
+
 ## [2.7.0] - V19
 
 - Added native weather control to the **XP / TIME** tab using the game's `Awaken.TG.Graphics.WeatherController`.
@@ -135,6 +148,7 @@ All notable public changes to FoA Trainer are documented in this file.
 - Added Flight / NoClip.
 - Added the Item Spawner and item-stat preview.
 
+[2.7.1]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.7.1
 [2.7.0]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.7.0
 [2.6.4]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.6.4
 [2.5.1]: https://github.com/Fenrisu1ven/FoA_Trainer/releases/tag/v2.5.1
