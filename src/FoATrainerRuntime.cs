@@ -206,8 +206,8 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static System.Collections.Generic.Dictionary<string, System.Reflection.MemberInfo> _espMemberCache = new System.Collections.Generic.Dictionary<string, System.Reflection.MemberInfo>();
     static System.Collections.Generic.Dictionary<string, bool> _espMissingMemberCache = new System.Collections.Generic.Dictionary<string, bool>();
     static System.Collections.Generic.Dictionary<string, int> _espNpcLocationState = new System.Collections.Generic.Dictionary<string, int>();
-    static System.Collections.Generic.HashSet<object> _espMerchantLocations = new System.Collections.Generic.HashSet<object>();
-    static System.Collections.Generic.HashSet<string> _espMerchantLocationIds = new System.Collections.Generic.HashSet<string>();
+    static System.Collections.Generic.Dictionary<object, bool> _espMerchantLocations = new System.Collections.Generic.Dictionary<object, bool>();
+    static System.Collections.Generic.Dictionary<string, bool> _espMerchantLocationIds = new System.Collections.Generic.Dictionary<string, bool>();
     static System.Reflection.FieldInfo _espPickItemDataField;
     static float _espNextScan;
     static int _espVisibleLastFrame;
@@ -809,9 +809,9 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
     static bool EspLocationIsMerchant(object location)
     {
         if (location == null) return false;
-        if (_espMerchantLocations.Contains(location)) return true;
+        if (_espMerchantLocations.ContainsKey(location)) return true;
         string id = EspObjectId(location);
-        return !string.IsNullOrEmpty(id) && _espMerchantLocationIds.Contains(id);
+        return !string.IsNullOrEmpty(id) && _espMerchantLocationIds.ContainsKey(id);
     }
 
     static EspEntityType EspClassifyNpc(object npc)
@@ -977,9 +977,9 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
                 if (shop == null || IsDiscarded(shop)) continue;
                 object location = GetEspProp(shop, "ParentModel");
                 if (location == null) continue;
-                _espMerchantLocations.Add(location);
+                _espMerchantLocations[location] = true;
                 string id = EspObjectId(location);
-                if (!string.IsNullOrEmpty(id)) _espMerchantLocationIds.Add(id);
+                if (!string.IsNullOrEmpty(id)) _espMerchantLocationIds[id] = true;
             }
         }
         catch (System.Exception ex)
