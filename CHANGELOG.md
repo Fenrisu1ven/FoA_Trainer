@@ -4,6 +4,12 @@ All notable public changes to FoA Trainer are documented in this file.
 
 ## [2.6.4] - V18.4
 
+- Added synchronized sliders alongside exact numeric inputs for all gameplay multipliers, rates, flight values, and ESP numeric settings.
+- Fixed decimal editing so both `1.5` and `1,5`, intermediate input states, Backspace/Delete, and negative values where allowed work correctly.
+- Reduced ESP minimum text size from 9 to 5, icon size from 12 to 6, and HP bar width from 24 to 8; added adjustable 1-8 px HP bar height.
+- Replaced `EnemyBaseClass`-only ESP detection with centralized runtime classification based on `NpcElement.AntagonismToHero`.
+- Added separate Friendly, Neutral, and Merchant ESP categories, toggles, markers, colors, counters, and backward-compatible profile loading.
+- Detect merchants through the game's dedicated `Shop` model and give Merchant priority over combat-capable NPC type information.
 - Returned to a stability branch based directly on the confirmed-working V18.3 runtime.
 - Added lightweight adjustable ESP icon badges and icons-only mode.
 - Split HP text and HP bars into independent options.
