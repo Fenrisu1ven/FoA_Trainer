@@ -2,7 +2,7 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
 {
     public static FoATrainerRuntime Instance;
     static HarmonyLib.Harmony _harmony;
-    static BepInEx.Logging.ManualLogSource _log = BepInEx.Logging.Logger.CreateLogSource("FoATrainer.Runtime");
+    static BepInEx.Logging.ManualLogSource _log;
     static System.Reflection.BindingFlags AllFlags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
 
     public static bool GodMode;
@@ -303,11 +303,20 @@ public class FoATrainerRuntime : UnityEngine.MonoBehaviour
 
     public static void Start()
     {
-        if (Instance != null) return;
-        UnityEngine.GameObject go = new UnityEngine.GameObject("FoATrainer.Runtime");
-        UnityEngine.Object.DontDestroyOnLoad(go);
-        Instance = go.AddComponent<FoATrainerRuntime>();
-        Instance.InitializeTrainer();
+        try
+        {
+            if (Instance != null) return;
+            if (_log == null) _log = BepInEx.Logging.Logger.CreateLogSource("FoATrainer.Runtime");
+            UnityEngine.GameObject go = new UnityEngine.GameObject("FoATrainer.Runtime");
+            UnityEngine.Object.DontDestroyOnLoad(go);
+            Instance = go.AddComponent<FoATrainerRuntime>();
+            Instance.InitializeTrainer();
+        }
+        catch (System.Exception ex)
+        {
+            if (_log != null) _log.LogError("[FoATrainer] Start error: " + ex);
+            throw;
+        }
     }
 
     void InitializeTrainer()

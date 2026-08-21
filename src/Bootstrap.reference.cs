@@ -49,8 +49,16 @@ namespace FoATrainer
             MethodInfo run = evaluatorType.GetMethod("Run");
             Log("[FoATrainer.V18.4] Compiling runtime source");
             run.Invoke(evaluator, new object[] { runtimeSource });
+
+            // The game's Mono.CSharp evaluator can deadlock on a second Run call after a
+            // large type declaration. Invoke the emitted runtime type directly instead.
+            FieldInfo moduleField = evaluatorType.GetField("module", BindingFlags.Instance | BindingFlags.NonPublic);
+            object moduleContainer = moduleField.GetValue(evaluator);
+            PropertyInfo builderProperty = moduleContainer.GetType().GetProperty("Builder");
+            Module runtimeModule = (Module)builderProperty.GetValue(moduleContainer, null);
+            Type runtimeType = runtimeModule.GetType("FoATrainerRuntime");
             Log("[FoATrainer.V18.4] Starting runtime");
-            run.Invoke(evaluator, new object[] { "FoATrainerRuntime.Start();" });
+            runtimeType.GetMethod("Start").Invoke(null, null);
             Log("[FoATrainer.V18.4] Awake completed");
         }
 

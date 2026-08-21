@@ -10,6 +10,7 @@ All notable public changes to FoA Trainer are documented in this file.
 - Replaced `EnemyBaseClass`-only ESP detection with centralized runtime classification based on `NpcElement.AntagonismToHero`.
 - Added separate Friendly, Neutral, and Merchant ESP categories, toggles, markers, colors, counters, and backward-compatible profile loading.
 - Detect merchants through the game's dedicated `Shop` model and give Merchant priority over combat-capable NPC type information.
+- Fixed Mono.CSharp startup hangs by invoking the emitted runtime type directly from the evaluator module instead of compiling a second evaluator submission.
 - Returned to a stability branch based directly on the confirmed-working V18.3 runtime.
 - Added lightweight adjustable ESP icon badges and icons-only mode.
 - Split HP text and HP bars into independent options.

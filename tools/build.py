@@ -45,13 +45,14 @@ strings=StringHeap(); blobs=BlobHeap(); us=USHeap(); idx={}
 for s in ['FoATrainer_V18_4.dll','<Module>','Bootstrap','FoATrainer','.ctor','Awake',
           'Object','System','Assembly','System.Reflection','BaseUnityPlugin','BepInEx','BepInPlugin',
           'File','System.IO','Type','Activator','MethodInfo','StreamWriter','System.IO','Boolean',
-          'Load','GetType','CreateInstance','GetMethod','Invoke','AppendAllText','set_AutoFlush','mscorlib']:
+          'FieldInfo','PropertyInfo','Module','BindingFlags','Load','GetType','CreateInstance',
+          'GetMethod','GetField','GetProperty','GetValue','Invoke','AppendAllText','set_AutoFlush','mscorlib']:
     idx[s]=strings.add(s)
 
 # TypeRef RIDs
-TR_OBJECT=1; TR_ASSEMBLY=2; TR_BASEPLUGIN=3; TR_PLUGINATTR=4; TR_FILE=5; TR_TYPE=6; TR_ACTIVATOR=7; TR_METHODINFO=8; TR_STREAMWRITER=9; TR_BOOLEAN=10
+TR_OBJECT=1; TR_ASSEMBLY=2; TR_BASEPLUGIN=3; TR_PLUGINATTR=4; TR_FILE=5; TR_TYPE=6; TR_ACTIVATOR=7; TR_METHODINFO=8; TR_STREAMWRITER=9; TR_BOOLEAN=10; TR_FIELDINFO=11; TR_PROPERTYINFO=12; TR_MODULE=13; TR_BINDINGFLAGS=14
 # MemberRef RIDs
-MR_BASE_CTOR=1; MR_ATTR_CTOR=2; MR_APPENDALLTEXT=3; MR_ASM_LOAD=4; MR_ASM_GETTYPE=5; MR_ACT_CREATE1=6; MR_ACT_CREATE2=7; MR_TYPE_GETMETHOD=8; MR_MI_INVOKE=9; MR_SW_CTOR=10; MR_SW_AUTOFLUSH=11
+MR_BASE_CTOR=1; MR_ATTR_CTOR=2; MR_APPENDALLTEXT=3; MR_ASM_LOAD=4; MR_ASM_GETTYPE=5; MR_ACT_CREATE1=6; MR_ACT_CREATE2=7; MR_TYPE_GETMETHOD=8; MR_MI_INVOKE=9; MR_SW_CTOR=10; MR_SW_AUTOFLUSH=11; MR_TYPE_GETFIELD=12; MR_FIELD_GETVALUE=13; MR_OBJECT_GETTYPE=14; MR_TYPE_GETPROPERTY=15; MR_PROPERTY_GETVALUE=16; MR_MODULE_GETTYPE=17
 
 sig_void0=blobs.add(b'\x20\x00\x01')
 sig_attr=blobs.add(b'\x20\x03\x01\x0e\x0e\x0e')
@@ -64,12 +65,18 @@ sig_getmethod=blobs.add(b'\x20\x01'+sig_class(TR_METHODINFO)+b'\x0e')
 sig_invoke=blobs.add(b'\x20\x02\x1c\x1c\x1d\x1c')
 sig_sw_ctor=blobs.add(b'\x20\x01\x01\x0e')
 sig_autoflush=blobs.add(b'\x20\x01\x01\x02')
+sig_getfield=blobs.add(b'\x20\x02'+sig_class(TR_FIELDINFO)+b'\x0e\x11'+c_uint((TR_BINDINGFLAGS<<2)|1))
+sig_field_getvalue=blobs.add(b'\x20\x01\x1c\x1c')
+sig_object_gettype=blobs.add(b'\x20\x00'+sig_class(TR_TYPE))
+sig_getproperty=blobs.add(b'\x20\x01'+sig_class(TR_PROPERTYINFO)+b'\x0e')
+sig_property_getvalue=blobs.add(b'\x20\x02\x1c\x1c\x1d\x1c')
+sig_module_gettype=blobs.add(b'\x20\x01'+sig_class(TR_TYPE)+b'\x0e')
 ca_blob=blobs.add(b'\x01\x00'+ser_string('rijiy.foa.trainer.v18.4')+ser_string('Tainted Grail Trainer by Rijiy V18.4')+ser_string('2.6.4')+b'\x00\x00')
 mscorlib_token=blobs.add(bytes.fromhex('b77a5c561934e089'))
 # locals: Assembly, Type, object, Type, StreamWriter, object, Type, object, Type, object, MethodInfo
 locals_sig=blobs.add(b'\x07\x0b'+sig_class(TR_ASSEMBLY)+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_TYPE)+sig_class(TR_STREAMWRITER)+b'\x1c'+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_TYPE)+b'\x1c'+sig_class(TR_METHODINFO))
 
-src_us=us.add(SRC); start_us=us.add('FoATrainerRuntime.Start();')
+src_us=us.add(SRC)
 asm_names=['System','System.Core','UnityEngine','UnityEngine.CoreModule','UnityEngine.IMGUIModule','UnityEngine.InputLegacyModule','UnityEngine.TextRenderingModule','0Harmony','BepInEx']
 asm_us=[us.add(x) for x in asm_names]
 
@@ -148,8 +155,18 @@ for off,name in zip(asm_us,asm_names):
 il+=ldloc(8)+tok(0x72,TOKEN_US(us.add('Run')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETMETHOD))+stloc(10)
 il+=log_il('[FoATrainer.V18.4] Compiling runtime source')
 il+=invoke_method(10,ldloc(9),[tok(0x72,TOKEN_US(src_us))])+b'\x26'
+il+=log_il('[FoATrainer.V18.4] Locating compiled runtime')
+# Evaluator.Run deadlocks on a second submission in the game's Mono.CSharp build.
+# Retrieve the emitted ModuleBuilder from Evaluator.module and invoke Start directly.
+il+=ldloc(8)+tok(0x72,TOKEN_US(us.add('module')))+ldc_i4(36)+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETFIELD))+stloc(2)
+il+=ldloc(2)+tok(0x74,TOKEN_TYPEREF(TR_FIELDINFO))+ldloc(9)+tok(0x6f,TOKEN_MEMBERREF(MR_FIELD_GETVALUE))+stloc(5)
+il+=ldloc(5)+tok(0x6f,TOKEN_MEMBERREF(MR_OBJECT_GETTYPE))+stloc(1)
+il+=ldloc(1)+tok(0x72,TOKEN_US(us.add('Builder')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETPROPERTY))+stloc(2)
+il+=ldloc(2)+tok(0x74,TOKEN_TYPEREF(TR_PROPERTYINFO))+ldloc(5)+b'\x14'+tok(0x6f,TOKEN_MEMBERREF(MR_PROPERTY_GETVALUE))+stloc(7)
+il+=ldloc(7)+tok(0x74,TOKEN_TYPEREF(TR_MODULE))+tok(0x72,TOKEN_US(us.add('FoATrainerRuntime')))+tok(0x6f,TOKEN_MEMBERREF(MR_MODULE_GETTYPE))+stloc(1)
 il+=log_il('[FoATrainer.V18.4] Starting runtime')
-il+=invoke_method(10,ldloc(9),[tok(0x72,TOKEN_US(start_us))])+b'\x26'
+il+=ldloc(1)+tok(0x72,TOKEN_US(us.add('Start')))+tok(0x6f,TOKEN_MEMBERREF(MR_TYPE_GETMETHOD))+stloc(10)
+il+=invoke_method(10,b'\x14',[])+b'\x26'
 il+=log_il('[FoATrainer.V18.4] Awake completed')+b'\x2a'
 awake_body=struct.pack('<HHII',0x3013,16,len(il),TOKEN_STANDALONESIG(1))+il  # fat, initlocals
 
@@ -164,7 +181,7 @@ SECTION_RVA=0x2000; ctor_rva=SECTION_RVA+ctor_off; awake_rva=SECTION_RVA+awake_o
 
 # metadata tables
 # refs: mscorlib=1, BepInEx=2
-rows={0:1,1:10,2:2,6:2,10:11,12:1,17:1,32:1,35:2}
+rows={0:1,1:14,2:2,6:2,10:17,12:1,17:1,32:1,35:2}
 valid=sum(1<<t for t in rows); heap_sizes=0
 res_scope_aref=lambda rid:(rid<<2)|2
 mr_parent_tr=lambda rid:(rid<<3)|1
@@ -179,7 +196,8 @@ table+=u16(0)+u16(idx['FoATrainer_V18_4.dll'])+u16(1)+u16(0)+u16(0)
 trs=[
  (1,'Object','System'),(1,'Assembly','System.Reflection'),(2,'BaseUnityPlugin','BepInEx'),(2,'BepInPlugin','BepInEx'),
  (1,'File','System.IO'),(1,'Type','System'),(1,'Activator','System'),(1,'MethodInfo','System.Reflection'),
- (1,'StreamWriter','System.IO'),(1,'Boolean','System')]
+ (1,'StreamWriter','System.IO'),(1,'Boolean','System'),(1,'FieldInfo','System.Reflection'),
+ (1,'PropertyInfo','System.Reflection'),(1,'Module','System.Reflection'),(1,'BindingFlags','System.Reflection')]
 for ar,name,ns in trs: table+=u16(res_scope_aref(ar))+u16(idx[name])+u16(idx[ns])
 # TypeDefs
 table+=u32(0)+u16(idx['<Module>'])+u16(0)+u16(0)+u16(1)+u16(1)
@@ -191,7 +209,9 @@ table+=u32(awake_rva)+u16(0)+u16(0x0081)+u16(idx['Awake'])+u16(sig_void0)+u16(1)
 mrs=[
  (TR_BASEPLUGIN,'.ctor',sig_void0),(TR_PLUGINATTR,'.ctor',sig_attr),(TR_FILE,'AppendAllText',sig_append),
  (TR_ASSEMBLY,'Load',sig_load),(TR_ASSEMBLY,'GetType',sig_gettype),(TR_ACTIVATOR,'CreateInstance',sig_create1),(TR_ACTIVATOR,'CreateInstance',sig_create2),
- (TR_TYPE,'GetMethod',sig_getmethod),(TR_METHODINFO,'Invoke',sig_invoke),(TR_STREAMWRITER,'.ctor',sig_sw_ctor),(TR_STREAMWRITER,'set_AutoFlush',sig_autoflush)]
+ (TR_TYPE,'GetMethod',sig_getmethod),(TR_METHODINFO,'Invoke',sig_invoke),(TR_STREAMWRITER,'.ctor',sig_sw_ctor),(TR_STREAMWRITER,'set_AutoFlush',sig_autoflush),
+ (TR_TYPE,'GetField',sig_getfield),(TR_FIELDINFO,'GetValue',sig_field_getvalue),(TR_OBJECT,'GetType',sig_object_gettype),
+ (TR_TYPE,'GetProperty',sig_getproperty),(TR_PROPERTYINFO,'GetValue',sig_property_getvalue),(TR_MODULE,'GetType',sig_module_gettype)]
 for tr,name,sg in mrs: table+=u16(mr_parent_tr(tr))+u16(idx[name])+u16(sg)
 # custom attr
 hasca=(2<<5)|3; catype=(MR_ATTR_CTOR<<3)|3; table+=u16(hasca)+u16(catype)+u16(ca_blob)
